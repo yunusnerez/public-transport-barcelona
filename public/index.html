@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>Barcelona toplu taşıma</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="map" role="application" aria-label="Barcelona haritası"></div>
+  <div id="status" class="quiet" aria-live="polite">
+    <span id="status-main">—</span>
+    <span id="status-note"></span>
+  </div>
+  <aside id="panel">
+    <div class="panel-bar">
+      <button id="sheet-toggle" type="button" aria-expanded="false" aria-controls="panel-body">Hatlar</button>
+      <div class="titles">
+        <strong>Barcelona</strong>
+        <span>Toplu taşıma</span>
+      </div>
+    </div>
+    <div id="panel-body">
+      <input id="search" type="search" placeholder="Hat ara" aria-label="Hat ara" autocomplete="off" enterkeyhint="search">
+      <div id="groups"></div>
+      <p class="legal">Veriler TMB, FGC ve TRAM açık verisidir. Tahmini konum gerçek GPS değildir. Altlık © OpenStreetMap, © CARTO.</p>
+    </div>
+  </aside>
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "built": "2026-10-06T20:25:37.028Z",
+  "serviceDate": "20261006",
+  "sources": {
+    "tmb": {
+      "id": "mobility-database-mirror",
+      "publisher": "TMB",
+      "version": "084410042026002",
+      "start": "20260410",
+      "end": "20261205"
+    },
+    "fgc": {
+      "url": "https://www.fgc.cat/google/google_transit.zip",
+      "publisher": "FGC",
+      "version": "2026-10-02T13:25:51+02:00_not tagged",
+      "start": "20240101",
+      "end": "20261231"
+    },
+    "tram": [
+      "https://opendata.tram.cat/GTFS/zip/TBX.zip",
+      "https://opendata.tram.cat/GTFS/zip/TBS.zip"
+    ]
+  },
+  "counts": {
+    "lines": 142,
+    "lineStrings": 303,
+    "stops": 2908,
+    "busLines": 105
+  }
+}

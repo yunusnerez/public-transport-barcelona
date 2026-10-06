@@ -1,0 +1,14 @@
+{
+  "name": "bcn-transit",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-gtfs.mjs",
+    "test": "node --test",
+    "dev:web": "python3 -m http.server 8788 --directory public",
+    "dev:worker": "node scripts/dev-worker.mjs"
+  }
+}
