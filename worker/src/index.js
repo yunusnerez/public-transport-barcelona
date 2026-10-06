@@ -24,11 +24,12 @@ const tramFeedCache = new Map();
 export default {
   async fetch(request, env = {}) {
     const url = new URL(request.url);
+    if (url.pathname !== "/api/vehicles") {
+      if (env.ASSETS) return env.ASSETS.fetch(request);
+      return json({ error: "not found" }, 404);
+    }
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders() });
-    }
-    if (url.pathname !== "/api/vehicles") {
-      return json({ error: "not found" }, 404);
     }
     if (request.method !== "GET") {
       return json({ error: "method" }, 405);

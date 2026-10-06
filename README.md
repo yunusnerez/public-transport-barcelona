@@ -1,6 +1,6 @@
 # Barcelona toplu taşıma
 
-Kişisel harita. Birkaç kişi, reklam yok, hesap yok, veritabanı yok. Statik sayfa Cloudflare Pages üzerinde durur. Canlı veri tek bir Worker'dan geçer. Ücretli servis kullanılmaz.
+Kişisel harita. Birkaç kişi, reklam yok, hesap yok, veritabanı yok. Harita dosyaları ve canlı veri aynı Worker'da durur. Ücretli servis kullanılmaz.
 
 Harita Barcelona merkezinde açılır (`[2.17, 41.39]`, zoom 12). Hat şekilleri ve duraklar derleme sırasında GTFS'ten üretilir; sayfa her açılışta zip indirmez.
 
@@ -43,7 +43,7 @@ Anahtar yoksa TRAM araçları istenmez.
 
 ## Cloudflare
 
-Worker ve Pages ayrı yayınlanır. Ücretsiz planda ikisi de yeter.
+Tek yayın hem haritayı hem `/api/vehicles` yolunu açar. `wrangler.toml` içindeki `assets.directory` `public/` klasörüdür. Bu satır yoksa yalnız API yayınlanır ve site adresi boş beyaz sayfa döner. Anahtarlar sayfayı açmaz.
 
 ```bash
 npx wrangler@4 secret put TMB_APP_ID
@@ -52,20 +52,19 @@ npx wrangler@4 secret put TRAM_CLIENT_ID
 npx wrangler@4 secret put TRAM_API_KEY
 
 npx wrangler@4 deploy
-npx wrangler@4 pages deploy public --project-name bcn-transit
 ```
 
 Aynı isimler Workers → Settings → Variables ekranından da yazılır. Değişkenleri `wrangler.toml` içine koyma.
 
-Sayfa ile Worker farklı kökteyse `public/config.js` içindeki `apiBase` Worker adresidir. Bu bir sır değildir:
+Git bağlıysa `main` dalına gelen push aynı projeyi yeniden yayınlar. Proje adı `public-transport-barcelona` olmalı.
+
+`public/config.js` içindeki `apiBase` bir sır değildir. Boşsa sayfa aynı kökteki `/api/vehicles` yolunu çağırır. Harita başka adreste, API `workers.dev` adresindeyse tam adresi yaz:
 
 ```js
 window.BCN_CONFIG = {
-  apiBase: "https://bcn-transit.<hesap>.workers.dev",
+  apiBase: "https://public-transport-barcelona.<hesap>.workers.dev",
 };
 ```
-
-Boş bırakılırsa sayfa aynı kökte `/api/vehicles` çağırır. İki tarafı tek alan adında birleştirirsen `apiBase` boş kalabilir. Worker `Access-Control-Allow-Origin: *` döner; kişisel kullanımda `pages.dev` adresi `workers.dev` adresini çağırabilir.
 
 ## Yerel
 
@@ -106,10 +105,9 @@ TMB anahtarı derleme ortamında varsa resmi GTFS alınır (`https://api.tmb.cat
 ```bash
 npm run build -- --refresh
 npx wrangler@4 deploy
-npx wrangler@4 pages deploy public --project-name bcn-transit
 ```
 
-Otobüs indeksi Worker paketinin içindedir. Yalnızca sayfayı yeniden yayınlamak tahmin geometrisini güncellemez. İkisini birden yayınla.
+Otobüs indeksi Worker paketinin içindedir. `npx wrangler@4 deploy` hem indeksi hem `public/` dosyalarını yayınlar.
 
 FGC statik GTFS: `https://www.fgc.cat/google/google_transit.zip`. Canlı konum: OpenDataSoft vehicle-positions kaydı. TRAM statik GTFS: `TBX.zip` ve `TBS.zip`.
 
@@ -138,5 +136,4 @@ npm test
 npm run dev:web
 npm run dev:worker
 npx wrangler@4 deploy
-npx wrangler@4 pages deploy public --project-name bcn-transit
 ```

@@ -1,7 +1,13 @@
-name = "bcn-transit"
+name = "public-transport-barcelona"
 main = "worker/src/index.js"
 compatibility_date = "2026-10-06"
 workers_dev = true
+
+# Harita dosyaları public/ içinden sunulur. /api Worker'da kalır.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = [ "/api/*" ]
 
 # Anahtarlar burada durmaz. wrangler secret put ile yazılır:
 # TMB_APP_ID, TMB_APP_KEY, TRAM_CLIENT_ID, TRAM_API_KEY
