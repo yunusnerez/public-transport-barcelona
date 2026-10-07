@@ -19,7 +19,7 @@ TRAM anahtarı yoksa katman kapalı kalır ve panelde "TRAM anahtarı yok" yazar
 
 AMB otobüsleri bu sürümde yok. Kaynakları GTFS-RT Trip Updates; araç koordinatı taşımıyor. Haritaya nokta olarak çizilmez.
 
-Varsayılan açık hatlar L1–L5 (yalnızca çizgi) ve FGC L6. Otobüs ve TRAM kapalı başlar, ilk istek şişmesin diye. Seçim tarayıcıda `bcn-lines-v1` anahtarıyla saklanır.
+Şehir görünümünde metro, FGC ve TRAM hatları açıktır. TMB otobüs çizgileri zoom 13 ve üzerinde, baktığın bölgede görünür. Katman çipi bunu `yakın`, `hepsi` ve `kapalı` arasında değiştirir. Bir hatta ya da arama sonucuna (Enter) basınca yalnız o hat kalır ve harita hatta sığar. Canlı ya da tahmini araca basınca harita onu izler. TMB metro hatlarında tren noktası yoktur; istasyon listesinden bir durağa basınca harita oraya gider. Seçim tarayıcıda `bcn-ui-v2` anahtarında durur.
 
 ## Anahtarlar
 

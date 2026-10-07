@@ -19,15 +19,40 @@
       <button id="sheet-toggle" type="button" aria-expanded="false" aria-controls="panel-body">Hatlar</button>
       <div class="titles">
         <strong>Barcelona</strong>
-        <span>Toplu taşıma</span>
+        <span id="subtitle">Hat seç veya yakınlaş</span>
       </div>
     </div>
+    <div id="focus-bar" hidden>
+      <div class="focus-top">
+        <i id="focus-swatch" class="swatch"></i>
+        <b id="focus-code"></b>
+        <span id="focus-chip" class="chip"></span>
+        <button id="focus-back" type="button">Tüm hatlar</button>
+      </div>
+      <p id="focus-name"></p>
+      <p id="focus-note"></p>
+    </div>
     <div id="panel-body">
-      <input id="search" type="search" placeholder="Hat ara" aria-label="Hat ara" autocomplete="off" enterkeyhint="search">
+      <div id="focus-detail" hidden>
+        <div id="focus-vehicles"></div>
+        <div id="focus-stops"></div>
+      </div>
+      <input id="search" type="search" placeholder="Hat ara: L1, H6, Sarrià" aria-label="Hat ara" autocomplete="off" enterkeyhint="search">
+      <div id="families" role="group" aria-label="Katmanlar">
+        <button type="button" class="family" data-family="metro">Metro</button>
+        <button type="button" class="family" data-family="fgc">FGC</button>
+        <button type="button" class="family" data-family="tram">TRAM</button>
+        <button type="button" class="family" data-family="bus">Otobüs · yakın</button>
+      </div>
+      <p id="hint"></p>
       <div id="groups"></div>
       <p class="legal">Veriler TMB, FGC ve TRAM açık verisidir. Tahmini konum gerçek GPS değildir. Altlık © OpenStreetMap, © CARTO.</p>
     </div>
   </aside>
+  <div id="follow-bar" hidden>
+    <span id="follow-label"></span>
+    <button id="follow-stop" type="button">Takibi bırak</button>
+  </div>
   <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
