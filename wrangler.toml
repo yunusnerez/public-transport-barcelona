@@ -4,6 +4,7 @@ compatibility_date = "2026-10-06"
 workers_dev = true
 
 # Harita dosyaları public/ içinden sunulur. /api Worker'da kalır.
+# Canlı adres bu Worker'dır. Pages önizlemesi production'ı değiştirmez.
 [assets]
 directory = "./public"
 binding = "ASSETS"
