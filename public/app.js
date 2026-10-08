@@ -146,10 +146,11 @@ function boot() {
   map.on("load", async () => {
     setStatus("quiet", "Hatlar yükleniyor", "");
     try {
+      const v = "20261008-3";
       const [catDoc, lineDoc, stopDoc] = await Promise.all([
-        fetch("data/catalog.json").then(readJson),
-        fetch("data/lines.geojson").then(readJson),
-        fetch("data/stops.geojson").then(readJson),
+        fetch(`data/catalog.json?v=${v}`).then(readJson),
+        fetch(`data/lines.geojson?v=${v}`).then(readJson),
+        fetch(`data/stops.geojson?v=${v}`).then(readJson),
       ]);
       catalog = catDoc.lines || [];
       for (const line of catalog) byId.set(line.id, line);
@@ -346,15 +347,71 @@ function boot() {
 
   function extractMetroMeta(props) {
     if (!props) return [];
-    if (Array.isArray(props.metro)) return props.metro;
+
+    // 1. Direct props.metro array or JSON string
+    if (Array.isArray(props.metro) && props.metro.length) {
+      return props.metro.map((m) => ({
+        line: m.line,
+        code: String(m.code || "").replace(/^6660*/, "") || String(m.code || ""),
+      }));
+    }
     if (typeof props.metro === "string") {
       try {
         const parsed = JSON.parse(props.metro);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length) {
+          return parsed.map((m) => ({
+            line: m.line,
+            code: String(m.code || "").replace(/^6660*/, "") || String(m.code || ""),
+          }));
+        }
       } catch {}
     }
-    const hit = stopFeatures.find((s) => (props.code && s.code === props.code) || (props.name && s.name === props.name && s.kind === "station"));
-    if (hit && Array.isArray(hit.metro)) return hit.metro;
+
+    // 2. Look up in cached stopFeatures by code or station name
+    const propCode = props.code != null ? String(props.code).trim() : "";
+    const propName = props.name != null ? String(props.name).trim() : "";
+    if (propCode || propName) {
+      const hit = stopFeatures.find((s) => {
+        if (propCode && String(s.code).trim() === propCode) return true;
+        if (propName && s.name === propName && s.kind === "station") return true;
+        return false;
+      });
+      if (hit) {
+        if (Array.isArray(hit.metro) && hit.metro.length) {
+          return hit.metro.map((m) => ({
+            line: m.line,
+            code: String(m.code || "").replace(/^6660*/, "") || String(m.code || ""),
+          }));
+        }
+        if (typeof hit.metro === "string") {
+          try {
+            const parsed = JSON.parse(hit.metro);
+            if (Array.isArray(parsed) && parsed.length) {
+              return parsed.map((m) => ({
+                line: m.line,
+                code: String(m.code || "").replace(/^6660*/, "") || String(m.code || ""),
+              }));
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // 3. Fallback: Parse metro lines directly from props.lines (e.g. ",tmb-metro:L3,")
+    const linesStr = String(props.lines || (props.line ? `,${props.line},` : ""));
+    const metroTokens = linesStr
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith("tmb-metro:"));
+
+    if (metroTokens.length > 0) {
+      const cleanCode = propCode.replace(/^6660*/, "") || propCode;
+      return metroTokens.map((t) => ({
+        line: t.replace("tmb-metro:", ""),
+        code: cleanCode,
+      }));
+    }
+
     return [];
   }
 

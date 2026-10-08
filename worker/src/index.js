@@ -510,7 +510,7 @@ function inferMetroLineFromCode(code) {
 
 async function metroArrivalsResponse(url, env) {
   const rawCodes = url.searchParams.get("codes") || url.searchParams.get("station") || "";
-  const codes = rawCodes.split(",").map((s) => s.trim()).filter(Boolean);
+  const codes = rawCodes.split(",").map((s) => s.trim().replace(/^6660*/, "")).filter(Boolean);
   const stationName = (url.searchParams.get("name") || "").trim();
   const lineFilter = (url.searchParams.get("line") || "").trim().toUpperCase();
   const now = nowSec();
