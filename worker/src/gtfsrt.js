@@ -65,7 +65,7 @@ function fieldsNamed(fields, n) {
   return fields.filter((f) => f[0] === n);
 }
 
-export function decodeVehiclePositions(buffer) {
+export function decodeVehiclePositions(buffer, stopCoords = null) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const root = readFields(bytes);
   let feedTimestamp = null;
@@ -81,16 +81,140 @@ export function decodeVehiclePositions(buffer) {
     const deleted = field(ent, 2);
     if (deleted && deleted[1] === "varint" && deleted[2] === 1) continue;
     const vehicleField = field(ent, 4);
-    if (!vehicleField || vehicleField[1] !== "bytes") continue;
-    const vp = message(vehicleField[2]);
-    const parsed = readVehicle(vp);
-    if (!parsed) continue;
-    const idField = field(ent, 1);
-    if (!parsed.vehicleId && idField && idField[1] === "bytes") parsed.vehicleId = asString(idField[2]);
-    if (!parsed.timestamp && feedTimestamp) parsed.timestamp = feedTimestamp;
-    vehicles.push(parsed);
+    if (vehicleField && vehicleField[1] === "bytes") {
+      const vp = message(vehicleField[2]);
+      const parsed = readVehicle(vp);
+      if (parsed) {
+        const idField = field(ent, 1);
+        if (!parsed.vehicleId && idField && idField[1] === "bytes") parsed.vehicleId = asString(idField[2]);
+        if (!parsed.timestamp && feedTimestamp) parsed.timestamp = feedTimestamp;
+        vehicles.push(parsed);
+        continue;
+      }
+    }
+    const tuField = field(ent, 3);
+    if (tuField && tuField[1] === "bytes" && stopCoords) {
+      const tu = message(tuField[2]);
+      const idField = field(ent, 1);
+      const entId = idField && idField[1] === "bytes" ? asString(idField[2]) : "";
+      const parsed = readTripUpdateVehicle(tu, entId, feedTimestamp, stopCoords);
+      if (parsed) {
+        vehicles.push(parsed);
+      }
+    }
   }
   return { timestamp: feedTimestamp, vehicles };
+}
+
+function readTripUpdateVehicle(tu, entId, feedTimestamp, stopCoords) {
+  const tripField = field(tu, 1);
+  let tripId = "";
+  let routeId = "";
+  if (tripField && tripField[1] === "bytes") {
+    const trip = message(tripField[2]);
+    const tid = field(trip, 1);
+    const rid = field(trip, 5);
+    if (tid && tid[1] === "bytes") tripId = asString(tid[2]);
+    if (rid && rid[1] === "bytes") routeId = asString(rid[2]);
+  }
+  const vehField = field(tu, 3);
+  let vehicleId = entId;
+  let label = "";
+  if (vehField && vehField[1] === "bytes") {
+    const vd = message(vehField[2]);
+    const id = field(vd, 1);
+    const lab = field(vd, 2);
+    if (id && id[1] === "bytes") vehicleId = asString(id[2]) || entId;
+    if (lab && lab[1] === "bytes") label = asString(lab[2]);
+  }
+  const tsField = field(tu, 4);
+  const ts = tsField && tsField[1] === "varint" ? tsField[2] : feedTimestamp || Math.floor(Date.now() / 1000);
+
+  const stuFields = fieldsNamed(tu, 2);
+  const stopUpdates = [];
+  for (const stuF of stuFields) {
+    if (stuF[1] !== "bytes") continue;
+    const stu = message(stuF[2]);
+    const stopIdField = field(stu, 4);
+    if (!stopIdField || stopIdField[1] !== "bytes") continue;
+    const stopId = asString(stopIdField[2]);
+    const arrField = field(stu, 2);
+    let arrTime = null;
+    if (arrField && arrField[1] === "bytes") {
+      const arr = message(arrField[2]);
+      const timeF = field(arr, 2);
+      if (timeF && timeF[1] === "varint") arrTime = timeF[2];
+    }
+    const depField = field(stu, 3);
+    let depTime = null;
+    if (depField && depField[1] === "bytes") {
+      const dep = message(depField[2]);
+      const timeF = field(dep, 2);
+      if (timeF && timeF[1] === "varint") depTime = timeF[2];
+    }
+    const time = arrTime || depTime;
+    if (time) stopUpdates.push({ stopId, time });
+  }
+
+  if (!stopUpdates.length || !stopCoords) return null;
+  stopUpdates.sort((a, b) => a.time - b.time);
+
+  const now = ts;
+  const nextIdx = stopUpdates.findIndex((s) => s.time > now);
+  let coords = null;
+  let bearing = null;
+  let stopId = "";
+
+  if (nextIdx === 0) {
+    coords = stopCoords[stopUpdates[0].stopId];
+    stopId = stopUpdates[0].stopId;
+  } else if (nextIdx > 0) {
+    const prev = stopUpdates[nextIdx - 1];
+    const next = stopUpdates[nextIdx];
+    stopId = next.stopId;
+    const pCoord = stopCoords[prev.stopId];
+    const nCoord = stopCoords[next.stopId];
+    if (pCoord && nCoord) {
+      const duration = Math.max(1, next.time - prev.time);
+      const elapsed = Math.max(0, Math.min(duration, now - prev.time));
+      const frac = elapsed / duration;
+      coords = [
+        pCoord[0] + (nCoord[0] - pCoord[0]) * frac,
+        pCoord[1] + (nCoord[1] - pCoord[1]) * frac,
+      ];
+      const rad = Math.PI / 180;
+      const dLon = (nCoord[0] - pCoord[0]) * rad;
+      const lat1 = pCoord[1] * rad;
+      const lat2 = nCoord[1] * rad;
+      const y = Math.sin(dLon) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+      bearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    } else if (nCoord) {
+      coords = nCoord;
+    }
+  } else if (stopUpdates.length > 0) {
+    const last = stopUpdates[stopUpdates.length - 1];
+    if (now - last.time < 90) {
+      coords = stopCoords[last.stopId];
+      stopId = last.stopId;
+    }
+  }
+
+  if (!coords) return null;
+  const [lon, lat] = coords;
+  if (lat < 40 || lat > 43.8 || lon < 0 || lon > 3.6) return null;
+
+  return {
+    tripId,
+    routeId,
+    lat,
+    lon,
+    bearing: Number.isFinite(bearing) ? bearing : null,
+    timestamp: ts,
+    stopId,
+    vehicleId,
+    label,
+  };
 }
 
 function readVehicle(vp) {

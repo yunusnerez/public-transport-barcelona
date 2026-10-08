@@ -44,6 +44,53 @@ test("protobuf vehicle positions keep GPS and drop canceled or out-of-range rows
   assert.ok(Math.abs(vehicle.bearing - 180) < 0.1);
 });
 
+test("TripUpdate entities decode into vehicle positions with interpolated stop coordinates", () => {
+  const now = 1791316803;
+  const stopCoords = {
+    "STOP_A": [2.15, 41.38],
+    "STOP_B": [2.16, 41.39],
+  };
+
+  const tripUpdateBytes = [
+    // TripDescriptor: tripId="TRAM_TRIP_1", routeId="T3"
+    ...bytesField(1, [
+      ...strField(1, "TRAM_TRIP_1"),
+      ...strField(5, "T3"),
+    ]),
+    // VehicleDescriptor: id="TRAM_VEH_1"
+    ...bytesField(3, [
+      ...strField(1, "TRAM_VEH_1"),
+    ]),
+    // StopTimeUpdate 1: stopId="STOP_A", departure time = now - 30
+    ...bytesField(2, [
+      ...strField(4, "STOP_A"),
+      ...bytesField(3, varintField(2, now - 30)),
+    ]),
+    // StopTimeUpdate 2: stopId="STOP_B", arrival time = now + 30
+    ...bytesField(2, [
+      ...strField(4, "STOP_B"),
+      ...bytesField(2, varintField(2, now + 30)),
+    ]),
+  ];
+
+  const entity = [
+    ...strField(1, "ent_tu_1"),
+    ...bytesField(3, tripUpdateBytes),
+  ];
+
+  const raw = feed([entity]);
+  const decoded = decodeVehiclePositions(raw, stopCoords);
+  assert.equal(decoded.vehicles.length, 1);
+  const v = decoded.vehicles[0];
+  assert.equal(v.tripId, "TRAM_TRIP_1");
+  assert.equal(v.routeId, "T3");
+  assert.equal(v.vehicleId, "TRAM_VEH_1");
+  // Progress is halfway between STOP_A and STOP_B (fraction 0.5)
+  assert.ok(Math.abs(v.lon - 2.155) < 1e-4);
+  assert.ok(Math.abs(v.lat - 41.385) < 1e-4);
+  assert.ok(Number.isFinite(v.bearing));
+});
+
 function varint(n) {
   const out = [];
   let value = n;

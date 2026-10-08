@@ -420,11 +420,12 @@ body {
 .veh.est:focus-visible .tag { display: block; }
 
 .maplibregl-popup-content {
-  background: #151c26;
+  background: #121822;
   color: var(--text);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid #223246;
+  border-radius: 11px;
+  padding: 11px 13px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
 }
 
 .maplibregl-popup-close-button {
@@ -434,8 +435,274 @@ body {
 }
 
 .pop { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.pop b { font-size: 16px; }
+.pop b { font-size: 15px; }
 .pop .src { color: var(--muted); }
+
+/* Metro & Bus station popup styling */
+.veh.metro .code {
+  border-radius: 4px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+
+.metro-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 250px;
+}
+
+.metro-pop-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.station-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #f0f4f9;
+}
+
+.station-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.station-lines {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.metro-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font: 800 11px/1 ui-sans-serif, system-ui, sans-serif;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.metro-badge.sm {
+  padding: 2px 5px;
+  font-size: 10px;
+  border-radius: 3px;
+}
+
+.metro-board-subhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #8fa2b6;
+  border-bottom: 1px solid #202c3b;
+  padding-bottom: 5px;
+  margin-top: 1px;
+}
+
+.live-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 750;
+  letter-spacing: 0.6px;
+  color: #38d374;
+  font-size: 9.5px;
+  text-transform: uppercase;
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38d374;
+  box-shadow: 0 0 6px #38d374;
+  animation: pulse-blink 1.4s infinite ease-in-out;
+}
+
+@keyframes pulse-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
+.metro-board-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #9bb0c4;
+}
+
+.metro-board {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #0d131c;
+  border-radius: 8px;
+  padding: 6px;
+  border: 1px solid #1a2533;
+  min-height: 52px;
+}
+
+.metro-board-loading,
+.board-empty,
+.board-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 8px;
+  font-size: 12px;
+  color: #8699ad;
+}
+
+.board-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #3d5167;
+  border-top-color: #3cd070;
+  border-radius: 50%;
+  animation: board-spin 0.8s linear infinite;
+}
+
+@keyframes board-spin {
+  to { transform: rotate(360deg); }
+}
+
+.metro-train-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  background: #141c28;
+  border: 1px solid #1b2636;
+}
+
+.train-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.train-dest {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 550;
+  color: #e4edf7;
+}
+
+.train-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.train-countdown {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #9ab9dc;
+  background: #192535;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #23344a;
+}
+
+.train-countdown.entra {
+  color: #ffca40;
+  background: rgba(255, 193, 7, 0.16);
+  border: 1px solid rgba(255, 193, 7, 0.55);
+  font-weight: 800;
+  font-size: 10.5px;
+  animation: entra-glow 1.1s infinite alternate;
+}
+
+@keyframes entra-glow {
+  from { box-shadow: 0 0 2px rgba(255, 193, 7, 0.3); }
+  to { box-shadow: 0 0 8px rgba(255, 193, 7, 0.7); }
+}
+
+.entra-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffca40;
+  margin-right: 3px;
+  vertical-align: middle;
+  animation: pulse-blink 0.7s infinite;
+}
+
+.metro-board-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #6c7f93;
+  padding: 1px 2px 0;
+}
+
+/* Bus Stop popups */
+.stop-pop {
+  gap: 6px;
+}
+
+.stop-pop-sub {
+  color: #8fa2b6;
+  font-size: 11.5px;
+}
+
+.stop-pop-sub code {
+  color: #e4edf7;
+  font-weight: 600;
+}
+
+.stop-lines-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.stop-line-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #16202c;
+  border: 1px solid #26384c;
+  color: #e4edf7;
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.stop-line-chip:hover {
+  background: #202d3e;
+  border-color: var(--c, #3d6f99);
+}
+
+.chip-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
 
 .maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: #151c26; }
 .maplibregl-popup-anchor-bottom .maplibregl-popup-tip,

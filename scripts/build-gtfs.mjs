@@ -44,18 +44,27 @@ const catalog = [];
 const lineFeatures = [];
 const stopMap = new Map();
 const busLines = {};
+const metroLines = {};
 const alias = {};
 const fgcTrips = [];
 const tramTrips = [];
 const tramRoutes = {};
 const tramNetwork = {};
+const tramStops = {};
 
 const tmbPack = await readFeed(tmb.zip);
-addFeed(tmbPack, { operator: "tmb", network: null, tripOut: null });
+addFeed(tmbPack, { operator: "tmb", network: null, tripOut: null, metroLines });
 const fgcPack = await readFeed(fgcZip);
 addFeed(fgcPack, { operator: "fgc", network: null, tripOut: fgcTrips });
 for (const item of tramZips) {
   const pack = await readFeed(item.zip);
+  for (const stop of pack.stops.values()) {
+    if (stop.lat && stop.lon) {
+      const coord = [round5(stop.lon), round5(stop.lat)];
+      if (stop.id) tramStops[stop.id] = coord;
+      if (stop.code) tramStops[stop.code] = coord;
+    }
+  }
   addFeed(pack, { operator: "tram", network: item.network, tripOut: tramTrips, tramRoutes, tramNetwork });
 }
 
@@ -63,7 +72,7 @@ catalog.sort((a, b) => groupRank(a) - groupRank(b) || a.code.localeCompare(b.cod
 
 const fgcIndex = compactTrips(fgcTrips);
 const busIndex = { alias, lines: busLines };
-const tramIndex = { network: tramNetwork, routes: tramRoutes, trips: tramTrips };
+const tramIndex = { network: tramNetwork, routes: tramRoutes, trips: tramTrips, stops: tramStops };
 
 await writeFile(path.join(publicData, "catalog.json"), JSON.stringify({ generated: new Date().toISOString(), lines: catalog }));
 await writeFile(path.join(publicData, "lines.geojson"), JSON.stringify({ type: "FeatureCollection", features: lineFeatures }));
@@ -89,6 +98,7 @@ await writeFile(path.join(publicData, "build-info.json"), JSON.stringify({
   },
 }, null, 2));
 await writeFile(path.join(workerData, "bus-index.json"), JSON.stringify(busIndex));
+await writeFile(path.join(workerData, "metro-index.json"), JSON.stringify({ lines: metroLines }));
 await writeFile(path.join(workerData, "fgc-index.json"), JSON.stringify(fgcIndex));
 await writeFile(path.join(workerData, "tram-index.json"), JSON.stringify(tramIndex));
 
@@ -315,7 +325,7 @@ function splitCsvLite(line) {
   return line.split(",");
 }
 
-function addFeed(pack, { operator, network, tripOut, tramRoutes, tramNetwork }) {
+function addFeed(pack, { operator, network, tripOut, tramRoutes, tramNetwork, metroLines }) {
   const chosen = chooseTrips(pack.routes, pack.trips, pack.services);
   const { times, routeStops } = scanStopTimes(pack.stopTimes, chosen, pack.trips);
   const seenCodes = new Set();
@@ -372,6 +382,15 @@ function addFeed(pack, { operator, network, tripOut, tramRoutes, tramNetwork }) 
       alias[String(route.route_id).toUpperCase()] = code;
       const middle = String(route.route_id).split(".")[1];
       if (middle && !alias[middle.toUpperCase()]) alias[middle.toUpperCase()] = code;
+    }
+    if (mode === "metro" && metroLines) {
+      metroLines[code] = patterns.map((pattern) => ({
+        dest: pattern.dest,
+        direction: pattern.direction,
+        stops: pattern.stops,
+        samples: pattern.samples,
+        shape: pattern.shape,
+      }));
     }
     if (operator === "tram") {
       tramNetwork[code] = network;
@@ -633,10 +652,19 @@ function addStop(stopId, mode, operator, lineIdValue, stops) {
       geometry: { type: "Point", coordinates: [round5(use.lon), round5(use.lat)] },
     };
     stopMap.set(key, feature);
-    return;
+  } else {
+    if (!feature.properties.lines.includes(`,${lineIdValue},`)) {
+      feature.properties.lines += `${lineIdValue},`;
+    }
   }
-  if (!feature.properties.lines.includes(`,${lineIdValue},`)) {
-    feature.properties.lines += `${lineIdValue},`;
+  if (mode === "metro") {
+    if (!feature.properties.metro) feature.properties.metro = [];
+    const lineMatch = lineIdValue.match(/^tmb-metro:(.+)$/);
+    const lineCode = lineMatch ? lineMatch[1] : "";
+    const platformCode = stop.code || stop.id;
+    if (!feature.properties.metro.some((m) => m.line === lineCode && m.code === platformCode)) {
+      feature.properties.metro.push({ line: lineCode, code: platformCode });
+    }
   }
 }
 

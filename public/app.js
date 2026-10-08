@@ -2,16 +2,15 @@
 
 const UI_KEY = "bcn-ui-v2";
 const POLL_MS = 28000;
-// TMB publishes no train GPS. Bus lines stay off until this zoom so the city
-// view stays a rail map; the chip can force every bus line on.
-const BUS_ZOOM = 13;
+// Bus lines appear at zoom 11; chip can force every bus line on.
+const BUS_ZOOM = 11;
 const GROUPS = [
   {
     id: "metro",
     title: "TMB Metro",
-    chip: "statik",
-    chipClass: "static",
-    note: "Tren konumu yok. Hat ve istasyon.",
+    chip: "canlı peron",
+    chipClass: "est",
+    note: "Seçilince tahmini trenler ve canlı peron ekranı.",
     match: (line) => line.mode === "metro",
   },
   {
@@ -73,6 +72,19 @@ let pollTimer = 0;
 let moveTimer = 0;
 let pollGen = 0;
 let popupVehicleId = null;
+let activeStationTicker = null;
+let currentPopupAbort = null;
+
+function clearStationTicker() {
+  if (activeStationTicker) {
+    clearInterval(activeStationTicker);
+    activeStationTicker = null;
+  }
+  if (currentPopupAbort) {
+    currentPopupAbort.abort();
+    currentPopupAbort = null;
+  }
+}
 const openGroups = new Set(["metro"]);
 
 const vehicles = { tmb: new Map(), fgc: new Map(), tram: new Map() };
@@ -124,10 +136,11 @@ function boot() {
   map.touchPitch.disable();
   window.__bcnMap = map;
 
-  const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "280px", offset: 18, className: "bcn-pop" });
+  const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "340px", offset: 18, className: "bcn-pop" });
   window.__bcnPopup = popup;
   popup.on("close", () => {
     popupVehicleId = null;
+    clearStationTicker();
   });
 
   map.on("load", async () => {
@@ -156,6 +169,7 @@ function boot() {
           code: props.code || "",
           kind: props.kind,
           lines: props.lines || "",
+          metro: props.metro || null,
           lng: coord[0],
           lat: coord[1],
         });
@@ -204,10 +218,10 @@ function boot() {
         id: "stops-bus",
         type: "circle",
         source: "stops",
-        minzoom: 14,
+        minzoom: 12.5,
         filter: ["==", ["get", "kind"], "stop"],
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 17, 5],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12.5, 2, 15, 3.5, 17, 5],
           "circle-color": "#9aabbe",
           "circle-stroke-width": 1,
           "circle-stroke-color": "#0e141b",
@@ -322,13 +336,197 @@ function boot() {
   function showStop(mapObj, pop, event) {
     const feature = event.features && event.features[0];
     if (!feature) return;
-    const name = feature.properties.name || "Durak";
-    const code = feature.properties.code || "";
+    const props = feature.properties || {};
+    const coord = feature.geometry && feature.geometry.coordinates;
+    const lngLat = event.lngLat || (coord ? [coord[0], coord[1]] : null);
+    if (!lngLat) return;
     stopFollow();
-    pop.setLngLat(event.lngLat).setHTML(
-      `<div class="pop"><b>${esc(name)}</b><div>${esc(code)}</div></div>`,
-    ).addTo(mapObj);
+    renderStationPopup(mapObj, pop, lngLat, props);
+  }
+
+  function extractMetroMeta(props) {
+    if (!props) return [];
+    if (Array.isArray(props.metro)) return props.metro;
+    if (typeof props.metro === "string") {
+      try {
+        const parsed = JSON.parse(props.metro);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    const hit = stopFeatures.find((s) => (props.code && s.code === props.code) || (props.name && s.name === props.name && s.kind === "station"));
+    if (hit && Array.isArray(hit.metro)) return hit.metro;
+    return [];
+  }
+
+  function renderStationPopup(mapObj, pop, lngLat, props) {
+    clearStationTicker();
     popupVehicleId = null;
+    const metroList = extractMetroMeta(props);
+
+    if (metroList.length > 0) {
+      const lineBadges = metroList.map((m) => {
+        const lineObj = byId.get(`tmb-metro:${m.line}`);
+        const c = lineObj ? lineObj.color : "#9AABBE";
+        return `<span class="metro-badge" style="background:${esc(c)}">${esc(m.line)}</span>`;
+      }).join("");
+
+      pop.setLngLat(lngLat).setHTML(
+        `<div class="metro-pop">
+          <div class="metro-pop-header">
+            <div class="station-title">
+              <span class="station-icon">🚇</span>
+              <b class="station-name">${esc(props.name || "İstasyon")}</b>
+            </div>
+            <div class="station-lines">${lineBadges}</div>
+          </div>
+          <div class="metro-board-subhead">
+            <span class="live-pulse"><i class="pulse-dot"></i> CANLI PERON EKRANI</span>
+            <span class="metro-board-time js-board-clock">--:--:--</span>
+          </div>
+          <div class="metro-board js-metro-board">
+            <div class="metro-board-loading"><span class="board-spinner"></span> Varış saatleri alınıyor...</div>
+          </div>
+          <div class="metro-board-foot">
+            <span>TMB Metro Peron Bilgisi</span>
+            <span class="js-board-source">Canlı</span>
+          </div>
+        </div>`
+      ).addTo(mapObj);
+
+      currentPopupAbort = new AbortController();
+      const codes = metroList.map((m) => m.code).join(",");
+      const base = apiBase();
+      const params = new URLSearchParams();
+      params.set("codes", codes);
+      if (props.name) params.set("name", props.name);
+      if (focusId && focusId.startsWith("tmb-metro:")) {
+        params.set("line", focusId.replace("tmb-metro:", ""));
+      }
+      const url = `${base}/api/metro-arrivals?${params}`;
+
+      let arrivalData = [];
+      async function fetchArrivals() {
+        try {
+          const res = await fetch(url, {
+            signal: currentPopupAbort ? currentPopupAbort.signal : undefined,
+            headers: { accept: "application/json" },
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          const data = await res.json();
+          const nowMs = Date.now();
+          arrivalData = (data.arrivals || []).map((a) => ({
+            ...a,
+            targetTime: nowMs + Math.max(0, a.seconds) * 1000,
+          }));
+          const popEl = pop.getElement();
+          if (!popEl) return;
+          const srcEl = popEl.querySelector(".js-board-source");
+          if (srcEl) {
+            srcEl.textContent = data.configured ? "TMB Canlı API" : "Tarifeli / Tahmini";
+          }
+          updateDisplay();
+        } catch (err) {
+          if (err.name === "AbortError") return;
+          const boardEl = pop.getElement() && pop.getElement().querySelector(".js-metro-board");
+          if (boardEl) {
+            boardEl.innerHTML = `<div class="board-error">Varış bilgisi alınamadı</div>`;
+          }
+        }
+      }
+
+      function updateDisplay() {
+        const popEl = pop.getElement();
+        if (!popEl) return;
+        const clockEl = popEl.querySelector(".js-board-clock");
+        if (clockEl) {
+          clockEl.textContent = new Date().toLocaleTimeString("tr-TR", {
+            timeZone: "Europe/Madrid",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+        }
+        const boardEl = popEl.querySelector(".js-metro-board");
+        if (!boardEl) return;
+
+        const nowMs = Date.now();
+        const active = arrivalData
+          .map((a) => {
+            const rem = Math.max(0, Math.round((a.targetTime - nowMs) / 1000));
+            return { ...a, remaining: rem };
+          })
+          .filter((a) => a.remaining >= 0);
+
+        if (!active.length) {
+          boardEl.innerHTML = `<div class="board-empty">Yaklaşan tren bulunmuyor</div>`;
+          return;
+        }
+
+        boardEl.innerHTML = active.slice(0, 6).map((a) => {
+          const lineObj = byId.get(`tmb-metro:${a.line}`);
+          const color = a.color || (lineObj ? lineObj.color : "#9AABBE");
+          const isEntra = a.remaining <= 15;
+          let timeHtml = "";
+          if (isEntra) {
+            timeHtml = `<span class="train-countdown entra"><i class="entra-dot"></i> İstasyona giriyor</span>`;
+          } else {
+            const m = Math.floor(a.remaining / 60);
+            const s = a.remaining % 60;
+            const timeStr = m > 0 ? `${m} dk ${s} sn` : `${s} sn`;
+            timeHtml = `<span class="train-countdown">${timeStr}</span>`;
+          }
+          return `<div class="metro-train-row">
+            <div class="train-left">
+              <span class="metro-badge sm" style="background:${esc(color)}">${esc(a.line)}</span>
+              <span class="train-dest" title="${esc(a.destination)}">${esc(a.destination)}</span>
+            </div>
+            <div class="train-right">${timeHtml}</div>
+          </div>`;
+        }).join("");
+      }
+
+      let tickCount = 0;
+      activeStationTicker = setInterval(() => {
+        tickCount++;
+        updateDisplay();
+        if (tickCount % 20 === 0) {
+          fetchArrivals();
+        }
+      }, 1000);
+      fetchArrivals();
+      return;
+    }
+
+    const lineTokens = (props.lines || "").split(",").map((s) => s.trim()).filter(Boolean);
+    let lineChipsHtml = "";
+    if (lineTokens.length) {
+      lineChipsHtml = `<div class="stop-lines-wrap">` + lineTokens.map((token) => {
+        const line = byId.get(token);
+        if (!line) return "";
+        return `<button type="button" class="stop-line-chip" data-id="${esc(line.id)}" style="--c:${esc(line.color)}">
+          <span class="chip-swatch" style="background:${esc(line.color)}"></span>
+          <b>${esc(line.code)}</b>
+        </button>`;
+      }).join("") + `</div>`;
+    }
+
+    pop.setLngLat(lngLat).setHTML(
+      `<div class="pop stop-pop">
+        <b>${esc(props.name || "Durak")}</b>
+        <div class="stop-pop-sub">Durak kodu: <code>${esc(props.code || "—")}</code></div>
+        ${lineChipsHtml}
+      </div>`
+    ).addTo(mapObj);
+
+    const popEl = pop.getElement();
+    if (popEl) {
+      for (const chip of popEl.querySelectorAll(".stop-line-chip")) {
+        chip.addEventListener("click", () => {
+          const id = chip.dataset.id;
+          if (id) focusLine(id);
+        });
+      }
+    }
   }
 
   function focusFromMap(event) {
@@ -460,12 +658,14 @@ function boot() {
   function renderStops(line) {
     const box = document.getElementById("focus-stops");
     box.replaceChildren();
-    if (!line || line.mode === "bus") return;
-    const ordered = alongSort(line.id, stopsFor(line.id).filter((stop) => stop.kind === "station"));
+    if (!line) return;
+    const kind = line.mode === "bus" ? "stop" : "station";
+    const stopsList = stopsFor(line.id).filter((stop) => stop.kind === kind);
+    const ordered = alongSort(line.id, stopsList);
     if (!ordered.length) return;
     const label = document.createElement("p");
     label.className = "stop-label";
-    label.textContent = "İstasyonlar";
+    label.textContent = line.mode === "bus" ? "Duraklar" : "İstasyonlar";
     const list = document.createElement("div");
     list.className = "stops";
     ordered.forEach((stop, index) => {
@@ -482,10 +682,7 @@ function boot() {
           duration: 500,
           essential: true,
         });
-        popup.setLngLat([stop.lng, stop.lat]).setHTML(
-          `<div class="pop"><b>${esc(stop.name)}</b><div>${esc(line.code)}</div></div>`,
-        ).addTo(map);
-        popupVehicleId = null;
+        renderStationPopup(map, popup, [stop.lng, stop.lat], stop);
       });
       list.append(button);
     });
@@ -497,7 +694,7 @@ function boot() {
     if (!box) return;
     box.replaceChildren();
     const line = focusId && byId.get(focusId);
-    if (!line || line.mode === "metro" || line.live === false) return;
+    if (!line || (line.mode !== "metro" && line.live === false)) return;
     const list = [];
     for (const op of ["tmb", "fgc", "tram"]) {
       for (const vehicle of vehicles[op].values()) {
@@ -508,7 +705,9 @@ function boot() {
     if (!list.length) {
       const empty = document.createElement("p");
       empty.className = "focus-empty";
-      empty.textContent = "Bu turda araç görünmüyor.";
+      empty.textContent = line.mode === "metro"
+        ? "Tren konumları hesaplanıyor..."
+        : "Bu turda araç görünmüyor.";
       box.append(empty);
       return;
     }
@@ -518,7 +717,8 @@ function boot() {
       button.className = "veh-row";
       if (vehicle.id === followId) button.classList.add("on");
       const where = vehicle.destination || "yön yok";
-      button.textContent = `${where} · ${vehicle.source === "gps" ? "canlı" : "tahmini"}`;
+      const tagText = line.mode === "metro" ? "tahmini tren" : (vehicle.source === "gps" ? "canlı" : "tahmini");
+      button.textContent = `${where} · ${tagText}`;
       button.addEventListener("click", () => {
         openPopup(popup, vehicle);
         startFollow(vehicle.id);
@@ -584,7 +784,12 @@ function boot() {
       if (!Number.isFinite(raw.lat) || !Number.isFinite(raw.lon)) continue;
       if (raw.lat < 40 || raw.lat > 43.8 || raw.lon < -0.5 || raw.lon > 3.6) continue;
       const line = lineFor(raw);
-      if (!line || line.mode === "metro" || line.live === false) continue;
+      if (!line) continue;
+      if (line.mode === "metro") {
+        if (!focusId || line.id !== focusId) continue;
+      } else if (line.live === false) {
+        continue;
+      }
       incoming[raw.operator].push(raw);
     }
     for (const op of ["tmb", "fgc", "tram"]) {
@@ -674,13 +879,16 @@ function createMarker(map, pop, vehicle) {
 
 function paintMarker(entry, vehicle) {
   entry.el._vehicle = vehicle;
+  const line = lineFor(vehicle);
+  const isMetro = line && line.mode === "metro";
   const gps = vehicle.source === "gps";
   entry.el.classList.toggle("gps", gps);
   entry.el.classList.toggle("est", !gps);
+  entry.el.classList.toggle("metro", Boolean(isMetro));
   entry.el.style.setProperty("--c", colorFor(vehicle));
-  entry.el.setAttribute("aria-label", `${vehicle.line} ${gps ? "canlı" : "tahmini"}`);
+  entry.el.setAttribute("aria-label", `${vehicle.line} ${isMetro ? "metro" : (gps ? "canlı" : "tahmini")}`);
   entry.code.textContent = vehicle.line;
-  entry.tag.textContent = gps ? "canlı" : "tahmini";
+  entry.tag.textContent = isMetro ? "metro" : (gps ? "canlı" : "tahmini");
   if (Number.isFinite(vehicle.bearing)) {
     entry.arrow.hidden = false;
     entry.arrow.style.transform = `rotate(${vehicle.bearing}deg)`;
@@ -692,11 +900,15 @@ function paintMarker(entry, vehicle) {
 
 function openPopup(pop, vehicle) {
   if (!vehicle) return;
+  clearStationTicker();
   const line = lineFor(vehicle);
+  const isMetro = line && line.mode === "metro";
   const gps = vehicle.source === "gps";
-  const src = gps
-    ? "Kaynak: canlı GPS."
-    : "Kaynak: tahmini. Konum, iBus varış süresinin GTFS hat şekline işlenmesidir. Gerçek GPS değildir.";
+  const src = isMetro
+    ? "Kaynak: tahmini metro konumu. İstasyon varış sürelerine ve GTFS hat geometrisine göre hesaplanmıştır."
+    : (gps
+      ? "Kaynak: canlı GPS."
+      : "Kaynak: tahmini. Konum, iBus varış süresinin GTFS hat şekline işlenmesidir. Gerçek GPS değildir.");
   pop.setLngLat([vehicle.lon, vehicle.lat]).setHTML(
     `<div class="pop">
       <b style="color:${esc(colorFor(vehicle))}">${esc(vehicle.line)}</b>
@@ -759,6 +971,7 @@ function easeToVehicle(vehicle, first) {
 }
 
 function dismissPopup() {
+  clearStationTicker();
   const pop = window.__bcnPopup;
   if (pop && pop.isOpen()) pop.remove();
   popupVehicleId = null;
@@ -826,7 +1039,11 @@ function bboxHits(bbox, bounds, pad) {
 function visibleLiveLines(map) {
   if (focusId && byId.has(focusId)) {
     const line = byId.get(focusId);
-    if (!line || line.live === false || line.mode === "metro") return [];
+    if (!line) return [];
+    if (line.mode === "metro") {
+      return [`metro:${line.code}`];
+    }
+    if (line.live === false) return [];
     if (line.mode === "tram" && tramConfigured === false) return [];
     if (!/^[A-Za-z0-9]{1,12}$/.test(line.code)) return [];
     const token = line.mode === "bus" ? `tmb:${line.code}` : `${line.operator}:${line.code}`;
@@ -931,7 +1148,11 @@ function bearing(lon1, lat1, lon2, lat2) {
 }
 
 function lineFor(vehicle) {
-  if (vehicle.operator === "tmb") return byId.get(`tmb-bus:${vehicle.line}`);
+  if (vehicle.operator === "tmb") {
+    const metro = byId.get(`tmb-metro:${vehicle.line}`);
+    if (metro) return metro;
+    return byId.get(`tmb-bus:${vehicle.line}`);
+  }
   if (vehicle.operator === "fgc") return byId.get(`fgc:${vehicle.line}`);
   if (vehicle.operator === "tram") return byId.get(`tram:${vehicle.line}`);
   return null;
@@ -1016,7 +1237,7 @@ function updateFamilyChips() {
 }
 
 function setHint() {
-  hintEl.textContent = "Metro, FGC ve TRAM çizili. Otobüsler zoom 13'te bu bölgede çıkar; çipe basınca hepsi açılır. Bir hat seçince yalnız o kalır. TMB tren konumu yayınlamaz. FGC, TRAM ve otobüste araca basınca takip başlar.";
+  hintEl.textContent = "Metro, FGC ve TRAM çizili. Otobüsler zoom 11'de bu bölgede çıkar; çipe basınca hepsi açılır. İstasyonlara basınca canlı peron ekranı açılır. Bir hat seçince o hattın tüm araçları gösterilir.";
 }
 
 function filterList() {
@@ -1065,26 +1286,26 @@ function markCurrent() {
 }
 
 function focusSubtitle(line) {
-  if (line.mode === "metro" || line.live === false) return "Hat ve istasyon";
+  if (line.mode === "metro") return "Tahmini tren takibi & Peron ekranı";
   if (line.mode === "bus") return "Tahmini takip";
   return "Canlı takip";
 }
 
 function chipClass(line) {
-  if (line.mode === "metro" || line.live === false) return "static";
+  if (line.mode === "metro") return "est";
   if (line.mode === "bus") return "est";
   return "gps";
 }
 
 function chipText(line) {
-  if (line.mode === "metro" || line.live === false) return "statik";
+  if (line.mode === "metro") return "tahmini / canlı peron";
   if (line.mode === "bus") return "tahmini";
   return "gps";
 }
 
 function focusNote(line) {
-  if (line.mode === "metro" || line.live === false) {
-    return "TMB bu hattın tren konumunu yayınlamıyor. İstasyona basınca harita oraya gider.";
+  if (line.mode === "metro") {
+    return "TMB tren GPS'i yayınlamıyor. Tren konumları istasyon varış sürelerine göre hesaplanmıştır. Canlı peron ekranı için istasyonlara tıklayın.";
   }
   if (line.mode === "bus") {
     return "Konum tahmini, gerçek GPS değil. Araca basınca harita onu izler.";
