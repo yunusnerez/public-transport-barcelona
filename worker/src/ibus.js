@@ -80,3 +80,35 @@ function roundBearing(n) {
   if (!Number.isFinite(n)) return null;
   return Math.round(n);
 }
+
+export function busArrivalsFromIbus(payload, alias = {}, nowSec = Math.floor(Date.now() / 1000)) {
+  const arrivals = [];
+  const payloads = Array.isArray(payload) ? payload : [payload];
+  for (const pl of payloads) {
+    for (const parade of paradesOf(pl)) {
+      const trajectories = parade.linies_trajectes || parade.liniesTrajectes || [];
+      for (const traj of trajectories) {
+        const lineCode = lineKey(alias, traj.codi_linia) ||
+          lineKey(alias, traj.nom_linia) ||
+          lineKey(alias, traj.codiLinia) ||
+          String(traj.nom_linia || traj.codi_linia || "").trim();
+        if (!lineCode) continue;
+        const dest = String(traj.desti_trajecte || traj.destiTrajecte || "").trim();
+        const buses = traj.propers_busos || traj.propersBusos || [];
+        for (const bus of buses) {
+          const eta = arrivalEtaSeconds(bus.temps_arribada ?? bus.tempsArribada, nowSec);
+          if (eta == null) continue;
+          arrivals.push({
+            line: lineCode,
+            destination: dest,
+            seconds: eta,
+            arriving: eta <= 45,
+            busId: bus.id_bus ?? bus.idBus ?? null,
+          });
+        }
+      }
+    }
+  }
+  arrivals.sort((a, b) => a.seconds - b.seconds);
+  return arrivals;
+}

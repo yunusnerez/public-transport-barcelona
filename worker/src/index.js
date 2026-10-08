@@ -3,7 +3,7 @@ import metroIndex from "../data/metro-index.json" with { type: "json" };
 import fgcIndex from "../data/fgc-index.json" with { type: "json" };
 import tramIndex from "../data/tram-index.json" with { type: "json" };
 import { decodeVehiclePositions, maybeGunzip } from "./gtfsrt.js";
-import { vehiclesFromIbus } from "./ibus.js";
+import { busArrivalsFromIbus, vehiclesFromIbus } from "./ibus.js";
 import { choosePattern, placeOnPattern } from "./estimate.js";
 import { decodePolyline } from "./polyline.js";
 import { pointAt, shapeMetrics } from "./geo.js";
@@ -29,7 +29,7 @@ const tramFeedCache = new Map();
 export default {
   async fetch(request, env = {}) {
     const url = new URL(request.url);
-    if (url.pathname !== "/api/vehicles" && url.pathname !== "/api/metro-arrivals") {
+    if (url.pathname !== "/api/vehicles" && url.pathname !== "/api/metro-arrivals" && url.pathname !== "/api/stop-arrivals" && url.pathname !== "/api/bus-arrivals") {
       if (env.ASSETS) return env.ASSETS.fetch(request);
       return json({ error: "not found" }, 404);
     }
@@ -38,6 +38,24 @@ export default {
     }
     if (request.method !== "GET") {
       return json({ error: "method" }, 405);
+    }
+    if (url.pathname === "/api/stop-arrivals" || url.pathname === "/api/bus-arrivals") {
+      try {
+        const body = await stopArrivalsResponse(url, env);
+        return json(body, 200, {
+          "cache-control": "public, max-age=15",
+        });
+      } catch {
+        const now = nowSec();
+        const code = (url.searchParams.get("code") || url.searchParams.get("stop") || "").trim();
+        return json({
+          stop: code,
+          timestamp: now,
+          arrivals: [],
+          configured: Boolean(env.TMB_APP_ID && env.TMB_APP_KEY),
+          error: "Durak varış bilgisi alınamadı",
+        }, 200, { "cache-control": "no-store" });
+      }
     }
     if (url.pathname === "/api/metro-arrivals") {
       try {
@@ -567,6 +585,33 @@ async function metroArrivalsResponse(url, env) {
     timestamp: now,
     arrivals,
     configured: hasKeys,
+    error: null,
+  };
+}
+
+async function stopArrivalsResponse(url, env) {
+  const code = (url.searchParams.get("code") || url.searchParams.get("stop") || "").trim();
+  const stationName = (url.searchParams.get("name") || "").trim();
+  const now = nowSec();
+
+  if (!code) {
+    return { stop: code, name: stationName, timestamp: now, arrivals: [], error: "Durak kodu belirtilmedi" };
+  }
+
+  const hasKeys = Boolean(env.TMB_APP_ID && env.TMB_APP_KEY);
+  if (!hasKeys) {
+    return { stop: code, name: stationName, timestamp: now, arrivals: [], configured: false, error: "TMB anahtarı yok" };
+  }
+
+  const data = await ibusStop(env, code, now);
+  const arrivals = busArrivalsFromIbus(data, busIndex.alias, now);
+
+  return {
+    stop: code,
+    name: stationName,
+    timestamp: now,
+    arrivals,
+    configured: true,
     error: null,
   };
 }

@@ -146,7 +146,7 @@ function boot() {
   map.on("load", async () => {
     setStatus("quiet", "Hatlar yükleniyor", "");
     try {
-      const v = "20261008-3";
+      const v = "20261008-4";
       const [catDoc, lineDoc, stopDoc] = await Promise.all([
         fetch(`data/catalog.json?v=${v}`).then(readJson),
         fetch(`data/lines.geojson?v=${v}`).then(readJson),
@@ -565,6 +565,143 @@ function boot() {
           <b>${esc(line.code)}</b>
         </button>`;
       }).join("") + `</div>`;
+    }
+
+    const isBusStop = props.kind === "stop" || lineTokens.some((t) => t.startsWith("tmb-bus:"));
+
+    if (isBusStop && props.code) {
+      pop.setLngLat(lngLat).setHTML(
+        `<div class="metro-pop bus-pop">
+          <div class="metro-pop-header">
+            <div class="station-title">
+              <span class="station-icon">🚏</span>
+              <b class="station-name">${esc(props.name || "Otobüs Durağı")}</b>
+            </div>
+            <span class="stop-code-badge">D. ${esc(props.code)}</span>
+          </div>
+          <div class="metro-board-subhead">
+            <span class="live-pulse"><i class="pulse-dot"></i> CANLI OTOBÜS VARIŞLARI</span>
+            <span class="metro-board-time js-board-clock">--:--:--</span>
+          </div>
+          <div class="metro-board js-bus-board">
+            <div class="metro-board-loading"><span class="board-spinner"></span> Otobüs saatleri alınıyor...</div>
+          </div>
+          ${lineChipsHtml ? `<div class="stop-lines-foot"><span class="stop-lines-label">Geçen Hatlar:</span>${lineChipsHtml}</div>` : ""}
+          <div class="metro-board-foot">
+            <span>TMB iBus Canlı Gösterge</span>
+            <span class="js-board-source">Canlı</span>
+          </div>
+        </div>`
+      ).addTo(mapObj);
+
+      const popEl = pop.getElement();
+      if (popEl) {
+        for (const chip of popEl.querySelectorAll(".stop-line-chip")) {
+          chip.addEventListener("click", () => {
+            const id = chip.dataset.id;
+            if (id) focusLine(id);
+          });
+        }
+      }
+
+      currentPopupAbort = new AbortController();
+      const base = apiBase();
+      const params = new URLSearchParams();
+      params.set("code", props.code);
+      if (props.name) params.set("name", props.name);
+      const url = `${base}/api/stop-arrivals?${params}`;
+
+      let arrivalData = [];
+      async function fetchBusArrivals() {
+        try {
+          const res = await fetch(url, {
+            signal: currentPopupAbort ? currentPopupAbort.signal : undefined,
+            headers: { accept: "application/json" },
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          const data = await res.json();
+          const nowMs = Date.now();
+          arrivalData = (data.arrivals || []).map((a) => ({
+            ...a,
+            targetTime: nowMs + Math.max(0, a.seconds) * 1000,
+          }));
+          const currPop = pop.getElement();
+          if (!currPop) return;
+          const srcEl = currPop.querySelector(".js-board-source");
+          if (srcEl) {
+            srcEl.textContent = data.configured ? "TMB iBus Canlı" : "iBus Yanıt Vermedi";
+          }
+          updateBusDisplay();
+        } catch (err) {
+          if (err.name === "AbortError") return;
+          const boardEl = pop.getElement() && pop.getElement().querySelector(".js-bus-board");
+          if (boardEl) {
+            boardEl.innerHTML = `<div class="board-error">Varış bilgisi alınamadı</div>`;
+          }
+        }
+      }
+
+      function updateBusDisplay() {
+        const currPop = pop.getElement();
+        if (!currPop) return;
+        const clockEl = currPop.querySelector(".js-board-clock");
+        if (clockEl) {
+          clockEl.textContent = new Date().toLocaleTimeString("tr-TR", {
+            timeZone: "Europe/Madrid",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+        }
+        const boardEl = currPop.querySelector(".js-bus-board");
+        if (!boardEl) return;
+
+        const nowMs = Date.now();
+        const active = arrivalData
+          .map((a) => {
+            const rem = Math.max(0, Math.round((a.targetTime - nowMs) / 1000));
+            return { ...a, remaining: rem };
+          })
+          .filter((a) => a.remaining >= 0);
+
+        if (!active.length) {
+          boardEl.innerHTML = `<div class="board-empty">Yaklaşan otobüs bulunmuyor</div>`;
+          return;
+        }
+
+        boardEl.innerHTML = active.slice(0, 8).map((a) => {
+          const lineObj = byId.get(`tmb-bus:${a.line}`) || catalog.find((c) => c.code === a.line);
+          const color = lineObj ? lineObj.color : "#e20613";
+          const isArriving = a.remaining <= 45;
+          let timeHtml = "";
+          if (isArriving) {
+            timeHtml = `<span class="train-countdown entra"><i class="entra-dot"></i> Yaklaşıyor</span>`;
+          } else {
+            const m = Math.floor(a.remaining / 60);
+            const s = a.remaining % 60;
+            const timeStr = m > 0 ? `${m} dk` : `${s} sn`;
+            timeHtml = `<span class="train-countdown">${timeStr}</span>`;
+          }
+          return `<div class="metro-train-row">
+            <div class="train-left">
+              <span class="metro-badge sm" style="background:${esc(color)}">${esc(a.line)}</span>
+              <span class="train-dest" title="${esc(a.destination)}">${esc(a.destination)}</span>
+            </div>
+            <div class="train-right">${timeHtml}</div>
+          </div>`;
+        }).join("");
+      }
+
+      let tickCount = 0;
+      activeStationTicker = setInterval(() => {
+        tickCount++;
+        updateBusDisplay();
+        if (tickCount % 20 === 0) {
+          fetchBusArrivals();
+        }
+      }, 1000);
+      fetchBusArrivals();
+      return;
     }
 
     pop.setLngLat(lngLat).setHTML(

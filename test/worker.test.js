@@ -76,3 +76,19 @@ test("focusing a metro line generates estimated train positions on tracks", asyn
   }
 });
 
+test("stop arrivals API validates missing code and missing keys gracefully", async () => {
+  const noCode = await worker.fetch(new Request("https://bcn.test/api/stop-arrivals"));
+  assert.equal(noCode.status, 200);
+  const noCodeBody = await noCode.json();
+  assert.equal(noCodeBody.arrivals.length, 0);
+  assert.ok(noCodeBody.error);
+
+  const withCode = await worker.fetch(new Request("https://bcn.test/api/stop-arrivals?code=21"));
+  assert.equal(withCode.status, 200);
+  const withCodeBody = await withCode.json();
+  assert.equal(withCodeBody.configured, false);
+  assert.equal(withCodeBody.arrivals.length, 0);
+  assert.equal(withCodeBody.error, "TMB anahtarı yok");
+});
+
+

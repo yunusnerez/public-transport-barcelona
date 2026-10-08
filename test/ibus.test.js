@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { vehiclesFromIbus } from "../worker/src/ibus.js";
+import { busArrivalsFromIbus, vehiclesFromIbus } from "../worker/src/ibus.js";
 import { encodePolyline } from "../worker/src/polyline.js";
 
 const now = 1_700_000_000;
@@ -38,6 +38,16 @@ test("a known stop becomes an estimated point, never GPS", () => {
 test("an ETA that cannot sit on the shape is dropped", () => {
   const vehicles = vehiclesFromIbus([payload("200", "H6", now + 50 * 60)], index, now);
   assert.deepEqual(vehicles, []);
+});
+
+test("busArrivalsFromIbus extracts upcoming bus arrivals with seconds and destination", () => {
+  const data = payload("200", "206", now + 180);
+  const arrivals = busArrivalsFromIbus(data, index.alias, now);
+  assert.equal(arrivals.length, 1);
+  assert.equal(arrivals[0].line, "H6");
+  assert.equal(arrivals[0].destination, "Zona Universitària");
+  assert.equal(arrivals[0].seconds, 180);
+  assert.equal(arrivals[0].arriving, false);
 });
 
 function payload(stopCode, lineCode, arrival) {
