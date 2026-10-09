@@ -4,57 +4,189 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex">
-  <title>Barcelona toplu taşıma</title>
+  <title>Barcelona Toplu Taşıma - Canlı Harita & Duraklar</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=20261008-4">
+  <link rel="stylesheet" href="styles.css?v=20261009-1">
 </head>
 <body>
   <div id="map" role="application" aria-label="Barcelona haritası"></div>
+  
+  <!-- Floating Map Controls -->
+  <div id="map-controls" class="map-controls" role="toolbar" aria-label="Harita Kontrolleri">
+    <button id="btn-locate" type="button" class="map-btn locate-btn" aria-label="Konumumu Bul" title="Konumumu Bul (Yakındaki Duraklar)">
+      <svg class="map-btn-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="7"></circle>
+        <line x1="12" y1="1" x2="12" y2="4"></line>
+        <line x1="12" y1="20" x2="12" y2="23"></line>
+        <line x1="1" y1="12" x2="4" y2="12"></line>
+        <line x1="20" y1="12" x2="23" y2="12"></line>
+        <circle cx="12" cy="12" r="2.5" fill="currentColor"></circle>
+      </svg>
+      <span class="btn-tooltip">Konumumu Bul</span>
+    </button>
+    <div class="map-btn-group">
+      <button id="btn-zoom-in" type="button" class="map-btn" aria-label="Yakınlaş" title="Yakınlaş">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+      <button id="btn-zoom-out" type="button" class="map-btn" aria-label="Uzaklaş" title="Uzaklaş">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+    <button id="btn-reset-view" type="button" class="map-btn" aria-label="Barselona Genel Görünüm" title="Barselona Haritasına Sıfırla">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"></circle>
+        <polygon points="12 3 15 11 12 15 9 11 12 3" fill="currentColor"></polygon>
+      </svg>
+      <span class="btn-tooltip">Barselona</span>
+    </button>
+  </div>
+
   <div id="status" class="quiet" aria-live="polite">
+    <span class="status-pulse-dot"></span>
     <span id="status-main">—</span>
     <span id="status-note"></span>
   </div>
+
   <aside id="panel">
+    <!-- Mobile drag handle zone -->
+    <div class="sheet-handle-zone" id="sheet-handle-zone">
+      <div class="sheet-handle"></div>
+    </div>
+
     <div class="panel-bar">
-      <button id="sheet-toggle" type="button" aria-expanded="false" aria-controls="panel-body">Hatlar</button>
+      <button id="sheet-toggle" type="button" aria-expanded="false" aria-controls="panel-body">
+        <span class="sheet-toggle-text">Hatlar</span>
+        <span class="sheet-toggle-icon">▲</span>
+      </button>
       <div class="titles">
-        <strong>Barcelona</strong>
+        <strong>Barcelona Ulaşım</strong>
         <span id="subtitle">Hat seç veya yakınlaş</span>
       </div>
+      <button id="quick-locate-btn" type="button" class="quick-locate-btn" title="Konumuma Git">
+        <span>📍 Yakınım</span>
+      </button>
     </div>
+
+    <!-- Focused Line Card (when a line is selected) -->
     <div id="focus-bar" hidden>
       <div class="focus-top">
-        <i id="focus-swatch" class="swatch"></i>
-        <b id="focus-code"></b>
-        <span id="focus-chip" class="chip"></span>
-        <button id="focus-back" type="button">Tüm hatlar</button>
+        <div class="focus-identity">
+          <i id="focus-swatch" class="swatch"></i>
+          <b id="focus-code"></b>
+          <span id="focus-chip" class="chip"></span>
+        </div>
+        <button id="focus-back" type="button" class="focus-back-btn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          Tüm hatlar
+        </button>
       </div>
       <p id="focus-name"></p>
       <p id="focus-note"></p>
+      
+      <!-- Sub-tabs for focused line: Stops vs Vehicles -->
+      <div class="focus-tabs" role="tablist">
+        <button type="button" class="focus-tab active" data-tab="stops" id="tab-stops">Duraklar</button>
+        <button type="button" class="focus-tab" data-tab="vehicles" id="tab-vehicles">Canlı Araçlar</button>
+      </div>
     </div>
+
     <div id="panel-body">
+      <!-- Focused Line details (Vehicles & Stops) -->
       <div id="focus-detail" hidden>
-        <div id="focus-vehicles"></div>
-        <div id="focus-stops"></div>
+        <div id="focus-stops" class="focus-subview active"></div>
+        <div id="focus-vehicles" class="focus-subview"></div>
       </div>
-      <input id="search" type="search" placeholder="Hat ara: L1, H6, Sarrià" aria-label="Hat ara" autocomplete="off" enterkeyhint="search">
-      <div id="families" role="group" aria-label="Katmanlar">
-        <button type="button" class="family" data-family="metro">Metro</button>
-        <button type="button" class="family" data-family="fgc">FGC</button>
-        <button type="button" class="family" data-family="tram">TRAM</button>
-        <button type="button" class="family" data-family="bus">Otobüs · yakın</button>
+
+      <!-- Main Navigation & Search -->
+      <div id="main-nav">
+        <!-- Search input box with icon & clear button -->
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input id="search" type="search" placeholder="Hat veya durak ara (örn: L3, H6, Diagonal...)" aria-label="Hat veya durak ara" autocomplete="off" enterkeyhint="search">
+          <button id="search-clear" type="button" class="search-clear" aria-label="Aramayı Temizle" hidden>✕</button>
+        </div>
+
+        <!-- Mode & Nearby Tabs -->
+        <div id="mode-tabs" class="mode-tabs" role="tablist">
+          <button type="button" class="mode-tab active" data-tab="all">Tümü</button>
+          <button type="button" class="mode-tab" data-tab="metro">🚇 Metro</button>
+          <button type="button" class="mode-tab" data-tab="fgc">🚆 FGC</button>
+          <button type="button" class="mode-tab" data-tab="tram">🚊 TRAM</button>
+          <button type="button" class="mode-tab" data-tab="bus">🚌 Otobüs</button>
+          <button type="button" class="mode-tab nearby-tab-btn" data-tab="nearby">📍 Yakınımda</button>
+        </div>
+
+        <!-- Map Layer Switches (layer toggles) -->
+        <div id="families" role="group" aria-label="Katmanlar" hidden>
+          <button type="button" class="family" data-family="metro">Metro</button>
+          <button type="button" class="family" data-family="fgc">FGC</button>
+          <button type="button" class="family" data-family="tram">TRAM</button>
+          <button type="button" class="family" data-family="bus">Otobüs · yakın</button>
+        </div>
+
+        <!-- Dedicated "Yakınımda" (Nearby Transit) Section -->
+        <div id="nearby-section" class="nearby-section" hidden>
+          <div class="nearby-header">
+            <div class="nearby-header-title">
+              <span class="nearby-gps-icon">📍</span>
+              <div>
+                <b id="nearby-status-title">Konumunuz Belirleniyor</b>
+                <span id="nearby-status-desc" class="nearby-status-desc">Yakındaki duraklar taranıyor...</span>
+              </div>
+            </div>
+            <button id="nearby-refresh-btn" type="button" class="nearby-refresh-btn" title="Konumu Yenile">Yenile</button>
+          </div>
+
+          <!-- Outside Barcelona notice / Demo simulator button -->
+          <div id="nearby-demo-prompt" class="nearby-demo-prompt" hidden>
+            <p>Barselona dışındasınız. Barselona merkezindeki durakları ve geçen hatları keşfetmek için:</p>
+            <button id="btn-simulate-catalunya" type="button" class="btn-demo-catalunya">
+              🏛️ Plaça de Catalunya ile Keşfet
+            </button>
+          </div>
+
+          <!-- Nearby Lines Quick Access -->
+          <div id="nearby-lines-block" class="nearby-block" hidden>
+            <div class="nearby-block-title">Yakınınızdan Geçen Hatlar</div>
+            <div id="nearby-lines-chips" class="nearby-lines-chips"></div>
+          </div>
+
+          <!-- Nearby Stops List -->
+          <div id="nearby-stops-block" class="nearby-block" hidden>
+            <div class="nearby-block-title">En Yakın Duraklar & İstasyonlar</div>
+            <div id="nearby-stops-list" class="nearby-stops-list"></div>
+          </div>
+        </div>
+
+        <!-- Live Search Results (when user types in search) -->
+        <div id="search-results-section" class="search-results-section" hidden>
+          <div id="search-summary" class="search-summary"></div>
+          <div id="search-results-list" class="search-results-list"></div>
+        </div>
+
+        <p id="hint"></p>
+        <div id="groups"></div>
+        <p class="legal">Veriler TMB, FGC ve TRAM açık verisidir. Tahmini konum gerçek GPS değildir. Altlık © OpenStreetMap, © CARTO.</p>
       </div>
-      <p id="hint"></p>
-      <div id="groups"></div>
-      <p class="legal">Veriler TMB, FGC ve TRAM açık verisidir. Tahmini konum gerçek GPS değildir. Altlık © OpenStreetMap, © CARTO.</p>
     </div>
   </aside>
+
   <div id="follow-bar" hidden>
+    <span class="follow-pulse"></span>
     <span id="follow-label"></span>
     <button id="follow-stop" type="button">Takibi bırak</button>
   </div>
+
   <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="config.js?v=20261008-4"></script>
-  <script src="app.js?v=20261008-4"></script>
+  <script src="app.js?v=20261009-1"></script>
 </body>
 </html>

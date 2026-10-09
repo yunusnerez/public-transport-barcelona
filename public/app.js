@@ -44,7 +44,21 @@ const statusMain = document.getElementById("status-main");
 const statusNote = document.getElementById("status-note");
 const panel = document.getElementById("panel");
 const sheetToggle = document.getElementById("sheet-toggle");
+const sheetHandleZone = document.getElementById("sheet-handle-zone");
 const search = document.getElementById("search");
+const searchClearBtn = document.getElementById("search-clear");
+const modeTabsEl = document.getElementById("mode-tabs");
+const nearbySection = document.getElementById("nearby-section");
+const nearbyStatusTitle = document.getElementById("nearby-status-title");
+const nearbyStatusDesc = document.getElementById("nearby-status-desc");
+const nearbyDemoPrompt = document.getElementById("nearby-demo-prompt");
+const nearbyLinesBlock = document.getElementById("nearby-lines-block");
+const nearbyLinesChips = document.getElementById("nearby-lines-chips");
+const nearbyStopsBlock = document.getElementById("nearby-stops-block");
+const nearbyStopsList = document.getElementById("nearby-stops-list");
+const searchResultsSection = document.getElementById("search-results-section");
+const searchSummaryEl = document.getElementById("search-summary");
+const searchResultsListEl = document.getElementById("search-results-list");
 const groupsEl = document.getElementById("groups");
 const familiesEl = document.getElementById("families");
 const hintEl = document.getElementById("hint");
@@ -60,6 +74,7 @@ const buttons = new Map();
 const stopFeatures = [];
 let catalog = [];
 let families = { metro: true, fgc: true, tram: true, bus: "auto" };
+let currentTab = "all";
 let focusId = null;
 let followId = null;
 let followAnchor = null;
@@ -74,6 +89,11 @@ let pollGen = 0;
 let popupVehicleId = null;
 let activeStationTicker = null;
 let currentPopupAbort = null;
+
+// User Geolocation State
+let userLocation = null;
+let userMarker = null;
+let isLocating = false;
 
 function clearStationTicker() {
   if (activeStationTicker) {
@@ -92,16 +112,81 @@ const markers = new Map();
 
 const narrowQuery = window.matchMedia("(max-width: 760px)");
 if (narrowQuery.matches) panel.classList.add("collapsed");
-sheetToggle.setAttribute("aria-expanded", panel.classList.contains("collapsed") ? "false" : "true");
+if (sheetToggle) {
+  sheetToggle.setAttribute("aria-expanded", panel.classList.contains("collapsed") ? "false" : "true");
+  sheetToggle.addEventListener("click", () => {
+    panel.classList.toggle("collapsed");
+    const open = !panel.classList.contains("collapsed");
+    sheetToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    layout();
+  });
+}
 
-sheetToggle.addEventListener("click", () => {
-  panel.classList.toggle("collapsed");
-  const open = !panel.classList.contains("collapsed");
-  sheetToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  layout();
-});
+// Touch swipe gestures on mobile sheet handle
+let touchStartY = 0;
+let touchDiffY = 0;
+if (sheetHandleZone) {
+  sheetHandleZone.addEventListener("click", () => {
+    panel.classList.toggle("collapsed");
+    layout();
+  });
+  sheetHandleZone.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 1) {
+      touchStartY = e.touches[0].clientY;
+      touchDiffY = 0;
+    }
+  }, { passive: true });
+  sheetHandleZone.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 1) {
+      touchDiffY = e.touches[0].clientY - touchStartY;
+    }
+  }, { passive: true });
+  sheetHandleZone.addEventListener("touchend", () => {
+    if (touchDiffY > 35) {
+      panel.classList.add("collapsed");
+      layout();
+    } else if (touchDiffY < -35) {
+      panel.classList.remove("collapsed");
+      layout();
+    }
+  });
+}
 
-search.addEventListener("input", filterList);
+if (search) {
+  search.addEventListener("input", () => {
+    const q = search.value.trim();
+    if (q) {
+      handleSearch(q);
+    } else {
+      restoreTabView();
+    }
+  });
+  search.addEventListener("focus", () => {
+    if (narrowQuery.matches) {
+      panel.classList.remove("collapsed");
+      layout();
+    }
+  });
+}
+
+if (searchClearBtn) {
+  searchClearBtn.addEventListener("click", () => {
+    search.value = "";
+    searchClearBtn.hidden = true;
+    restoreTabView();
+    search.focus();
+  });
+}
+
+if (modeTabsEl) {
+  modeTabsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".mode-tab");
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    selectTab(tab);
+  });
+}
+
 narrowQuery.addEventListener("change", () => {
   if (narrowQuery.matches) panel.classList.add("collapsed");
   layout();
@@ -289,41 +374,96 @@ function boot() {
     if (event && event.error) console.error(event.error);
   });
 
-  document.getElementById("focus-back").addEventListener("click", clearFocus);
-  document.getElementById("follow-stop").addEventListener("click", stopFollow);
-  familiesEl.addEventListener("click", (event) => {
-    const button = event.target.closest(".family");
-    if (!button) return;
-    const key = button.dataset.family;
-    if (key === "bus") {
-      families.bus = families.bus === "auto" ? "on" : families.bus === "on" ? "off" : "auto";
-    } else {
-      families[key] = !families[key];
-    }
-    if (focusId) {
-      focusId = null;
-      stopFollow();
-    }
-    saveUi();
-    renderFocus();
-    updateFamilyChips();
-    layout();
-    applyView(map);
-    poll(true);
-    arm(POLL_MS);
+  // Event Listeners for UI
+  document.getElementById("focus-back")?.addEventListener("click", clearFocus);
+  document.getElementById("follow-stop")?.addEventListener("click", stopFollow);
+
+  // Focus detail sub-tabs (Stops vs Vehicles)
+  document.getElementById("tab-stops")?.addEventListener("click", () => {
+    document.getElementById("tab-stops")?.classList.add("active");
+    document.getElementById("tab-vehicles")?.classList.remove("active");
+    document.getElementById("focus-stops")?.classList.add("active");
+    document.getElementById("focus-vehicles")?.classList.remove("active");
   });
-  search.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    const query = norm(search.value).trim();
-    if (!query) {
-      if (focusId) clearFocus();
-      return;
-    }
-    const hits = catalog.filter((line) => lineMatches(line.code, line.name, query));
-    hits.sort((a, b) => rankMatch(a, query) - rankMatch(b, query));
-    if (hits[0]) focusLine(hits[0].id);
+  document.getElementById("tab-vehicles")?.addEventListener("click", () => {
+    document.getElementById("tab-vehicles")?.classList.add("active");
+    document.getElementById("tab-stops")?.classList.remove("active");
+    document.getElementById("focus-vehicles")?.classList.add("active");
+    document.getElementById("focus-stops")?.classList.remove("active");
   });
+
+  // Floating map controls
+  document.getElementById("btn-locate")?.addEventListener("click", () => {
+    locateUser(true);
+  });
+  document.getElementById("quick-locate-btn")?.addEventListener("click", () => {
+    selectTab("nearby");
+    if (!userLocation) locateUser(true);
+  });
+  document.getElementById("btn-zoom-in")?.addEventListener("click", () => {
+    if (window.__bcnMap) window.__bcnMap.zoomIn();
+  });
+  document.getElementById("btn-zoom-out")?.addEventListener("click", () => {
+    if (window.__bcnMap) window.__bcnMap.zoomOut();
+  });
+  document.getElementById("btn-reset-view")?.addEventListener("click", () => {
+    if (focusId) clearFocus();
+    if (window.__bcnMap) {
+      skipMovePoll = true;
+      window.__bcnMap.flyTo({
+        center: [2.17, 41.39],
+        zoom: 12,
+        duration: 800,
+        essential: true,
+      });
+    }
+  });
+  document.getElementById("btn-simulate-catalunya")?.addEventListener("click", () => {
+    simulateCatalunya();
+  });
+  document.getElementById("nearby-refresh-btn")?.addEventListener("click", () => {
+    locateUser(true);
+  });
+
+  if (familiesEl) {
+    familiesEl.addEventListener("click", (event) => {
+      const button = event.target.closest(".family");
+      if (!button) return;
+      const key = button.dataset.family;
+      if (key === "bus") {
+        families.bus = families.bus === "auto" ? "on" : families.bus === "on" ? "off" : "auto";
+      } else {
+        families[key] = !families[key];
+      }
+      if (focusId) {
+        focusId = null;
+        stopFollow();
+      }
+      saveUi();
+      renderFocus();
+      updateFamilyChips();
+      layout();
+      applyView(map);
+      poll(true);
+      arm(POLL_MS);
+    });
+  }
+
+  if (search) {
+    search.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      const query = norm(search.value).trim();
+      if (!query) {
+        if (focusId) clearFocus();
+        return;
+      }
+      const hits = catalog.filter((line) => lineMatches(line.code, line.name, query));
+      hits.sort((a, b) => rankMatch(a, query) - rankMatch(b, query));
+      if (hits[0]) focusLine(hits[0].id);
+    });
+  }
+
   window.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
     if (event.target === search) return;
@@ -804,7 +944,6 @@ function boot() {
     dismissPopup();
     saveUi();
     renderFocus();
-    if (narrowQuery.matches) panel.classList.add("collapsed");
     layout();
     applyView(map);
     fitLine(map, id);
@@ -826,14 +965,18 @@ function boot() {
 
   function renderFocus() {
     const line = focusId && byId.get(focusId);
-    familiesEl.hidden = Boolean(line);
-    hintEl.hidden = Boolean(line);
+    if (familiesEl) familiesEl.hidden = Boolean(line);
+    if (hintEl) hintEl.hidden = Boolean(line);
+    const mainNav = document.getElementById("main-nav");
+
     if (!line) {
       focusBar.hidden = true;
       focusDetail.hidden = true;
+      if (mainNav) mainNav.hidden = false;
       markCurrent();
       return;
     }
+    if (mainNav) mainNav.hidden = true;
     focusBar.hidden = false;
     focusDetail.hidden = false;
     focusBar.style.borderLeftColor = line.color;
@@ -856,31 +999,85 @@ function boot() {
     const kind = line.mode === "bus" ? "stop" : "station";
     const stopsList = stopsFor(line.id).filter((stop) => stop.kind === kind);
     const ordered = alongSort(line.id, stopsList);
-    if (!ordered.length) return;
-    const label = document.createElement("p");
-    label.className = "stop-label";
-    label.textContent = line.mode === "bus" ? "Duraklar" : "İstasyonlar";
+    const tabStops = document.getElementById("tab-stops");
+    if (tabStops) tabStops.textContent = `Duraklar (${ordered.length})`;
+
+    if (!ordered.length) {
+      const empty = document.createElement("p");
+      empty.className = "focus-empty";
+      empty.textContent = "Bu hatta ait durak bulunamadı.";
+      box.append(empty);
+      return;
+    }
+
     const list = document.createElement("div");
     list.className = "stops";
     ordered.forEach((stop, index) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "stop";
-      button.textContent = `${index + 1}. ${stop.name}`;
+      button.className = "stop-timeline-row";
+      button.style.setProperty("--c", line.color || "#3d6f99");
+
+      const seq = document.createElement("span");
+      seq.className = "stop-seq";
+      seq.textContent = `${index + 1}`;
+
+      const dot = document.createElement("span");
+      dot.className = "stop-dot";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "stop-name-text";
+      nameSpan.textContent = stop.name;
+
+      button.append(seq, dot, nameSpan);
+
+      // Transfer badges for other lines passing through this stop
+      const otherLines = (stop.lines || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .filter((lId) => lId !== line.id)
+        .map((lId) => byId.get(lId))
+        .filter(Boolean);
+
+      if (otherLines.length > 0) {
+        const transfers = document.createElement("span");
+        transfers.className = "stop-transfers";
+        otherLines.slice(0, 3).forEach((other) => {
+          const badge = document.createElement("span");
+          badge.className = "metro-badge sm";
+          badge.style.background = other.color;
+          badge.textContent = other.code;
+          transfers.append(badge);
+        });
+        if (otherLines.length > 3) {
+          const more = document.createElement("span");
+          more.className = "metro-badge sm";
+          more.style.background = "#2a3848";
+          more.textContent = `+${otherLines.length - 3}`;
+          transfers.append(more);
+        }
+        button.append(transfers);
+      }
+
       button.addEventListener("click", () => {
         stopFollow();
         skipMovePoll = true;
         map.easeTo({
           center: [stop.lng, stop.lat],
-          zoom: Math.max(map.getZoom(), 15),
+          zoom: Math.max(map.getZoom(), 15.5),
           duration: 500,
           essential: true,
         });
         renderStationPopup(map, popup, [stop.lng, stop.lat], stop);
+        if (narrowQuery.matches) {
+          panel.classList.add("collapsed");
+          layout();
+        }
       });
       list.append(button);
     });
-    box.append(label, list);
+    box.append(list);
   }
 
   function renderVehicles() {
@@ -896,12 +1093,15 @@ function boot() {
         if (match && match.id === line.id) list.push(vehicle);
       }
     }
+    const tabVehicles = document.getElementById("tab-vehicles");
+    if (tabVehicles) tabVehicles.textContent = `Canlı Araçlar (${list.length})`;
+
     if (!list.length) {
       const empty = document.createElement("p");
       empty.className = "focus-empty";
       empty.textContent = line.mode === "metro"
-        ? "Tren konumları hesaplanıyor..."
-        : "Bu turda araç görünmüyor.";
+        ? "Tren konumları istasyon sürelerine göre hesaplanıyor..."
+        : "Bu hatta şu anda aktif araç görünmüyor.";
       box.append(empty);
       return;
     }
@@ -910,12 +1110,32 @@ function boot() {
       button.type = "button";
       button.className = "veh-row";
       if (vehicle.id === followId) button.classList.add("on");
-      const where = vehicle.destination || "yön yok";
-      const tagText = line.mode === "metro" ? "tahmini tren" : (vehicle.source === "gps" ? "canlı" : "tahmini");
-      button.textContent = `${where} · ${tagText}`;
+      button.style.setProperty("--c", colorFor(vehicle));
+
+      const left = document.createElement("div");
+      left.className = "veh-row-left";
+      const dest = document.createElement("div");
+      dest.className = "veh-row-dest";
+      dest.textContent = vehicle.destination ? `Yön: ${vehicle.destination}` : "Yön belirtilmemiş";
+      const tag = document.createElement("div");
+      tag.className = "veh-row-tag";
+      tag.textContent = line.mode === "metro"
+        ? "⏱️ Tahmini tren konumu"
+        : (vehicle.source === "gps" ? "⚡ Canlı GPS konumu" : "⏱️ Tahmini konum");
+      left.append(dest, tag);
+
+      const action = document.createElement("span");
+      action.className = "veh-track-action";
+      action.textContent = vehicle.id === followId ? "İzleniyor ✓" : "Takip Et";
+
+      button.append(left, action);
       button.addEventListener("click", () => {
         openPopup(popup, vehicle);
         startFollow(vehicle.id);
+        if (narrowQuery.matches) {
+          panel.classList.add("collapsed");
+          layout();
+        }
       });
       box.append(button);
     }
@@ -1044,6 +1264,434 @@ function boot() {
     const stamp = (body && body.updated) || (lastGood && lastGood.updated);
     const warn = messages.length > 0;
     setStatus(warn ? "warn" : "ok", refreshLabel(stamp), messages.join(" · "));
+  }
+}
+
+// User Location & Nearby Transit logic
+function locateUser(animate = true) {
+  if (isLocating) return;
+  const btn = document.getElementById("btn-locate");
+  const quickBtn = document.getElementById("quick-locate-btn");
+  if (btn) btn.classList.add("loading");
+  if (quickBtn) quickBtn.classList.add("loading");
+  isLocating = true;
+
+  if (!navigator.geolocation) {
+    isLocating = false;
+    if (btn) btn.classList.remove("loading");
+    if (quickBtn) quickBtn.classList.remove("loading");
+    setStatus("warn", "Konum desteklenmiyor", "Test konumu kullanılabilir");
+    simulateCatalunya();
+    return;
+  }
+
+  setStatus("quiet", "Konum aranıyor...", "");
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      isLocating = false;
+      if (btn) {
+        btn.classList.remove("loading");
+        btn.classList.add("active");
+      }
+      if (quickBtn) quickBtn.classList.remove("loading");
+
+      const lng = pos.coords.longitude;
+      const lat = pos.coords.latitude;
+      const accuracy = pos.coords.accuracy;
+
+      setUserLocation(lng, lat, accuracy, false, animate);
+    },
+    (err) => {
+      isLocating = false;
+      if (btn) btn.classList.remove("loading");
+      if (quickBtn) quickBtn.classList.remove("loading");
+      console.warn("Geolocation error:", err);
+      handleLocationError(err);
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+  );
+}
+
+function handleLocationError(err) {
+  let msg = "Konum alınamadı";
+  if (err.code === 1) msg = "Konum izni reddedildi";
+  else if (err.code === 2) msg = "Konum bulunamadı";
+  else if (err.code === 3) msg = "Konum zaman aşımı";
+
+  setStatus("warn", msg, "Barselona merkezini test edebilirsiniz");
+  selectTab("nearby");
+  if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = false;
+  if (nearbyStatusTitle) nearbyStatusTitle.textContent = "Konum İzni Alınamadı";
+  if (nearbyStatusDesc) nearbyStatusDesc.textContent = "Barselona merkezindeki durakları görmek için aşağıdaki butona dokunun.";
+  if (nearbyLinesBlock) nearbyLinesBlock.hidden = true;
+  if (nearbyStopsBlock) nearbyStopsBlock.hidden = true;
+}
+
+function setUserLocation(lng, lat, accuracy, isDemo = false, animate = true) {
+  const distToBcnCenter = haversine(lng, lat, 2.17005, 41.38702);
+  const isOutside = distToBcnCenter > 40000;
+
+  userLocation = { lng, lat, accuracy, isDemo, isOutside };
+  updateUserMarker(lng, lat);
+
+  if (animate && window.__bcnMap) {
+    skipMovePoll = true;
+    window.__bcnMap.flyTo({
+      center: [lng, lat],
+      zoom: isOutside ? 12 : 15.5,
+      duration: 1000,
+      essential: true,
+    });
+  }
+
+  setStatus("ok", isDemo ? "Test: Pl. Catalunya" : "Konum bulundu", "");
+  selectTab("nearby");
+  renderNearby();
+}
+
+function simulateCatalunya() {
+  setUserLocation(2.17005, 41.38702, 10, true, true);
+}
+
+function updateUserMarker(lng, lat) {
+  const map = window.__bcnMap;
+  if (!map) return;
+  if (!userMarker) {
+    const el = document.createElement("div");
+    el.className = "user-location-marker";
+    const radar = document.createElement("span");
+    radar.className = "user-location-radar";
+    const dot = document.createElement("span");
+    dot.className = "user-location-dot";
+    el.append(radar, dot);
+    userMarker = new maplibregl.Marker({ element: el, anchor: "center" })
+      .setLngLat([lng, lat])
+      .addTo(map);
+  } else {
+    userMarker.setLngLat([lng, lat]);
+  }
+}
+
+function renderNearby() {
+  if (!userLocation) return;
+  const { lng, lat, isOutside, isDemo } = userLocation;
+
+  if (isOutside && !isDemo) {
+    if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = false;
+    if (nearbyStatusTitle) nearbyStatusTitle.textContent = "Barselona Dışındasınız";
+    const km = Math.round(haversine(lng, lat, 2.17005, 41.38702) / 1000);
+    if (nearbyStatusDesc) nearbyStatusDesc.textContent = `Bulunduğunuz konum Barselona'ya ~${km} km mesafede.`;
+    if (nearbyLinesBlock) nearbyLinesBlock.hidden = true;
+    if (nearbyStopsBlock) nearbyStopsBlock.hidden = true;
+    return;
+  }
+
+  if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = true;
+  if (nearbyStatusTitle) nearbyStatusTitle.textContent = isDemo ? "📍 Plaça de Catalunya (Simülasyon)" : "📍 Bulunduğunuz Bölge";
+  if (nearbyStatusDesc) nearbyStatusDesc.textContent = "En yakın duraklar ve canlı hatlar:";
+  if (nearbyLinesBlock) nearbyLinesBlock.hidden = false;
+  if (nearbyStopsBlock) nearbyStopsBlock.hidden = false;
+
+  const stopsWithDist = [];
+  for (const stop of stopFeatures) {
+    const dist = Math.round(haversine(lng, lat, stop.lng, stop.lat));
+    stopsWithDist.push({ ...stop, distance: dist });
+  }
+  stopsWithDist.sort((a, b) => a.distance - b.distance);
+
+  const nearest15 = stopsWithDist.slice(0, 15);
+
+  const seenLineIds = new Set();
+  const nearbyLines = [];
+  for (const s of nearest15) {
+    const lineIds = (s.lines || "").split(",").map((t) => t.trim()).filter(Boolean);
+    for (const lid of lineIds) {
+      if (!seenLineIds.has(lid)) {
+        seenLineIds.add(lid);
+        const lObj = byId.get(lid);
+        if (lObj) nearbyLines.push(lObj);
+      }
+    }
+  }
+
+  if (nearbyLinesChips) {
+    nearbyLinesChips.replaceChildren();
+    for (const line of nearbyLines) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "nearby-line-chip";
+      chip.style.setProperty("--c", line.color || "#3d6f99");
+      chip.innerHTML = `<span class="swatch" style="background:${esc(line.color)}"></span><b>${esc(line.code)}</b>`;
+      chip.title = `${line.code}: ${line.name || ""}`;
+      chip.addEventListener("click", () => {
+        focusLine(line.id);
+      });
+      nearbyLinesChips.append(chip);
+    }
+  }
+
+  if (nearbyStopsList) {
+    nearbyStopsList.replaceChildren();
+    for (const stop of nearest15) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "nearby-stop-card";
+
+      const top = document.createElement("div");
+      top.className = "nearby-stop-top";
+
+      const nameWrap = document.createElement("div");
+      nameWrap.className = "nearby-stop-name-wrap";
+      const icon = document.createElement("span");
+      icon.className = "nearby-stop-icon";
+      icon.textContent = stop.kind === "station" ? (stop.lines.includes("fgc:") ? "🚆" : "🚇") : (stop.lines.includes("tram:") ? "🚊" : "🚏");
+      const name = document.createElement("span");
+      name.className = "nearby-stop-name";
+      name.textContent = stop.name;
+      nameWrap.append(icon, name);
+
+      const dist = document.createElement("span");
+      dist.className = "nearby-stop-dist";
+      dist.textContent = stop.distance < 1000 ? `${stop.distance} m` : `${(stop.distance / 1000).toFixed(1)} km`;
+
+      top.append(nameWrap, dist);
+
+      const foot = document.createElement("div");
+      foot.className = "nearby-stop-foot";
+
+      const linesWrap = document.createElement("div");
+      linesWrap.className = "nearby-stop-lines";
+      const stopLineIds = (stop.lines || "").split(",").map((t) => t.trim()).filter(Boolean);
+      for (const lid of stopLineIds.slice(0, 5)) {
+        const lObj = byId.get(lid);
+        if (lObj) {
+          const badge = document.createElement("span");
+          badge.className = "metro-badge sm";
+          badge.style.background = lObj.color || "#3d6f99";
+          badge.textContent = lObj.code;
+          linesWrap.append(badge);
+        }
+      }
+      if (stopLineIds.length > 5) {
+        const more = document.createElement("span");
+        more.className = "metro-badge sm";
+        more.style.background = "#243140";
+        more.textContent = `+${stopLineIds.length - 5}`;
+        linesWrap.append(more);
+      }
+
+      const walk = document.createElement("span");
+      walk.className = "nearby-walk-time";
+      const walkMin = Math.round(stop.distance / 80);
+      walk.textContent = walkMin <= 1 ? "1 dk yürüme" : `${walkMin} dk yürüme`;
+
+      foot.append(linesWrap, walk);
+      card.append(top, foot);
+
+      card.addEventListener("click", () => {
+        stopFollow();
+        skipMovePoll = true;
+        const map = window.__bcnMap;
+        const pop = window.__bcnPopup;
+        if (map) {
+          map.easeTo({
+            center: [stop.lng, stop.lat],
+            zoom: Math.max(map.getZoom(), 15.5),
+            duration: 500,
+            essential: true,
+          });
+          if (pop) renderStationPopup(map, pop, [stop.lng, stop.lat], stop);
+        }
+        if (narrowQuery.matches) {
+          panel.classList.add("collapsed");
+          layout();
+        }
+      });
+
+      nearbyStopsList.append(card);
+    }
+  }
+}
+
+// Category Tabs selection
+function selectTab(tab) {
+  currentTab = tab;
+  if (modeTabsEl) {
+    for (const b of modeTabsEl.querySelectorAll(".mode-tab")) {
+      b.classList.toggle("active", b.dataset.tab === tab);
+    }
+  }
+  if (search) search.value = "";
+  if (searchClearBtn) searchClearBtn.hidden = true;
+  if (searchResultsSection) searchResultsSection.hidden = true;
+
+  if (tab === "nearby") {
+    groupsEl.hidden = true;
+    nearbySection.hidden = false;
+    if (userLocation) {
+      renderNearby();
+    } else {
+      locateUser(true);
+    }
+  } else {
+    nearbySection.hidden = true;
+    groupsEl.hidden = false;
+    filterGroupsByTab(tab);
+  }
+}
+
+function filterGroupsByTab(tab) {
+  for (const groupEl of groupsEl.querySelectorAll(".group")) {
+    const groupId = groupEl.dataset.group;
+    if (tab === "all") {
+      groupEl.hidden = false;
+      groupEl.classList.toggle("shut", !openGroups.has(groupId));
+    } else if (tab === groupId) {
+      groupEl.hidden = false;
+      groupEl.classList.remove("shut");
+    } else {
+      groupEl.hidden = true;
+    }
+  }
+}
+
+function restoreTabView() {
+  if (searchClearBtn) searchClearBtn.hidden = true;
+  if (searchResultsSection) searchResultsSection.hidden = true;
+  if (currentTab === "nearby") {
+    groupsEl.hidden = true;
+    nearbySection.hidden = false;
+  } else {
+    nearbySection.hidden = true;
+    groupsEl.hidden = false;
+    filterGroupsByTab(currentTab);
+  }
+}
+
+// Search handler
+function handleSearch(rawQuery) {
+  const query = norm(rawQuery).trim();
+  if (!query) {
+    restoreTabView();
+    return;
+  }
+  if (searchClearBtn) searchClearBtn.hidden = false;
+  groupsEl.hidden = true;
+  nearbySection.hidden = true;
+  if (searchResultsSection) searchResultsSection.hidden = false;
+
+  const lineMatches = [];
+  for (const line of catalog) {
+    const code = norm(line.code);
+    const name = norm(line.name || "");
+    const mode = norm(line.mode || "");
+    let score = -1;
+    if (code === query) score = 0;
+    else if (code.startsWith(query)) score = 1;
+    else if (code.includes(query)) score = 2;
+    else if (name.includes(query)) score = 3;
+    else if (mode.includes(query)) score = 4;
+
+    if (score >= 0) {
+      lineMatches.push({ line, score });
+    }
+  }
+  lineMatches.sort((a, b) => a.score - b.score);
+
+  const matchedStops = [];
+  if (query.length >= 3) {
+    for (const stop of stopFeatures) {
+      if (norm(stop.name).includes(query)) {
+        matchedStops.push(stop);
+        if (matchedStops.length >= 8) break;
+      }
+    }
+  }
+
+  renderSearchResults(lineMatches.map((m) => m.line), matchedStops);
+}
+
+function renderSearchResults(lines, stops) {
+  if (searchSummaryEl) {
+    const parts = [];
+    if (lines.length) parts.push(`${lines.length} hat`);
+    if (stops.length) parts.push(`${stops.length} durak`);
+    searchSummaryEl.textContent = parts.length ? `${parts.join(", ")} bulundu` : "Sonuç bulunamadı";
+  }
+
+  if (!searchResultsListEl) return;
+  searchResultsListEl.replaceChildren();
+
+  // 1. Line results
+  for (const line of lines) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "search-item";
+    item.style.setProperty("--c", line.color || "#3d6f99");
+
+    const swatch = document.createElement("i");
+    swatch.className = "swatch";
+    swatch.style.background = line.color || "#3d6f99";
+
+    const info = document.createElement("div");
+    info.className = "search-item-info";
+    const name = document.createElement("div");
+    name.className = "search-item-name";
+    name.textContent = `${line.code} · ${line.name || ""}`;
+    const sub = document.createElement("div");
+    sub.className = "search-item-sub";
+    sub.textContent = `${line.mode.toUpperCase()} · ${chipText(line)}`;
+    info.append(name, sub);
+
+    item.append(swatch, info);
+    item.addEventListener("click", () => {
+      focusLine(line.id);
+    });
+    searchResultsListEl.append(item);
+  }
+
+  // 2. Stop results
+  for (const stop of stops) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "search-item";
+
+    const icon = document.createElement("span");
+    icon.className = "nearby-stop-icon";
+    icon.textContent = stop.kind === "station" ? (stop.lines.includes("fgc:") ? "🚆" : "🚇") : (stop.lines.includes("tram:") ? "🚊" : "🚏");
+
+    const info = document.createElement("div");
+    info.className = "search-item-info";
+    const name = document.createElement("div");
+    name.className = "search-item-name";
+    name.textContent = stop.name;
+    const sub = document.createElement("div");
+    sub.className = "search-item-sub";
+    sub.textContent = stop.kind === "station" ? "İstasyon" : `Otobüs Durağı (Kod: ${stop.code || "—"})`;
+    info.append(name, sub);
+
+    item.append(icon, info);
+    item.addEventListener("click", () => {
+      stopFollow();
+      skipMovePoll = true;
+      const map = window.__bcnMap;
+      const pop = window.__bcnPopup;
+      if (map) {
+        map.easeTo({
+          center: [stop.lng, stop.lat],
+          zoom: Math.max(map.getZoom(), 15.5),
+          duration: 500,
+          essential: true,
+        });
+        if (pop) renderStationPopup(map, pop, [stop.lng, stop.lat], stop);
+      }
+      if (narrowQuery.matches) {
+        panel.classList.add("collapsed");
+        layout();
+      }
+    });
+    searchResultsListEl.append(item);
   }
 }
 
@@ -1399,7 +2047,7 @@ function loadUi() {
     }
     if (typeof parsed.focusId === "string") focusId = parsed.focusId;
   } catch {
-    /* keep defaults */
+    /* private mode */
   }
 }
 
@@ -1412,6 +2060,7 @@ function saveUi() {
 }
 
 function updateFamilyChips() {
+  if (!familiesEl) return;
   for (const button of familiesEl.querySelectorAll(".family")) {
     const key = button.dataset.family;
     if (key === "bus") {
@@ -1431,7 +2080,8 @@ function updateFamilyChips() {
 }
 
 function setHint() {
-  hintEl.textContent = "Metro, FGC ve TRAM çizili. Otobüsler zoom 11'de bu bölgede çıkar; çipe basınca hepsi açılır. İstasyonlara basınca canlı peron ekranı açılır. Bir hat seçince o hattın tüm araçları gösterilir.";
+  if (!hintEl) return;
+  hintEl.textContent = "Metro, FGC ve TRAM çizili. İstasyonlara basınca canlı peron ekranı açılır. Bir hat seçince o hattın tüm araçları gösterilir.";
 }
 
 function filterList() {
@@ -1475,7 +2125,11 @@ function markCurrent() {
     else button.removeAttribute("aria-current");
   }
   const line = focusId && byId.get(focusId);
-  sheetToggle.textContent = line ? line.code : "Hatlar";
+  if (sheetToggle) {
+    const textEl = sheetToggle.querySelector(".sheet-toggle-text");
+    if (textEl) textEl.textContent = line ? line.code : "Hatlar";
+    else sheetToggle.textContent = line ? line.code : "Hatlar";
+  }
   subtitle.textContent = line ? focusSubtitle(line) : "Hat seç veya yakınlaş";
 }
 
@@ -1589,17 +2243,19 @@ function arm(delay) {
 function panelPadding() {
   if (narrowQuery.matches) {
     const collapsed = panel.classList.contains("collapsed");
-    const bottom = collapsed ? (focusId ? 150 : 84) : Math.round(window.innerHeight * 0.46);
+    const bottom = collapsed ? (focusId ? 110 : 80) : Math.round(window.innerHeight * 0.48);
     return { top: 78, bottom, left: 10, right: 10 };
   }
-  return { top: focusId ? 86 : 52, bottom: 28, left: 352, right: 16 };
+  return { top: focusId ? 86 : 52, bottom: 28, left: 368, right: 16 };
 }
 
 function layout() {
   const map = window.__bcnMap;
   if (!map) return;
   map.setPadding(panelPadding());
-  sheetToggle.setAttribute("aria-expanded", panel.classList.contains("collapsed") ? "false" : "true");
+  if (sheetToggle) {
+    sheetToggle.setAttribute("aria-expanded", panel.classList.contains("collapsed") ? "false" : "true");
+  }
 }
 
 function setStatus(kind, main, note) {
