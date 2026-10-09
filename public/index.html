@@ -124,14 +124,6 @@
           <button type="button" class="mode-tab nearby-tab-btn" data-tab="nearby">📍 Yakınımda</button>
         </div>
 
-        <!-- Map Layer Switches (layer toggles) -->
-        <div id="families" role="group" aria-label="Katmanlar" hidden>
-          <button type="button" class="family" data-family="metro">Metro</button>
-          <button type="button" class="family" data-family="fgc">FGC</button>
-          <button type="button" class="family" data-family="tram">TRAM</button>
-          <button type="button" class="family" data-family="bus">Otobüs · yakın</button>
-        </div>
-
         <!-- Dedicated "Yakınımda" (Nearby Transit) Section -->
         <div id="nearby-section" class="nearby-section" hidden>
           <div class="nearby-header">
@@ -145,11 +137,10 @@
             <button id="nearby-refresh-btn" type="button" class="nearby-refresh-btn" title="Konumu Yenile">Yenile</button>
           </div>
 
-          <!-- Outside Barcelona notice / Demo simulator button -->
+          <!-- Demo / Simulation button -->
           <div id="nearby-demo-prompt" class="nearby-demo-prompt" hidden>
-            <p>Barselona dışındasınız. Barselona merkezindeki durakları ve geçen hatları keşfetmek için:</p>
             <button id="btn-simulate-catalunya" type="button" class="btn-demo-catalunya">
-              🏛️ Plaça de Catalunya ile Keşfet
+              🏛️ Plaça de Catalunya Merkezini İncele (Demo)
             </button>
           </div>
 

@@ -1315,22 +1315,26 @@ function locateUser(animate = true) {
 
 function handleLocationError(err) {
   let msg = "Konum alınamadı";
-  if (err.code === 1) msg = "Konum izni reddedildi";
-  else if (err.code === 2) msg = "Konum bulunamadı";
+  if (err.code === 1) msg = "Konum izni verilmedi";
+  else if (err.code === 2) msg = "Cihaz konumu bulunamadı";
   else if (err.code === 3) msg = "Konum zaman aşımı";
 
-  setStatus("warn", msg, "Barselona merkezini test edebilirsiniz");
+  setStatus("warn", msg, "Barselona merkezi test edilebilir");
   selectTab("nearby");
   if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = false;
-  if (nearbyStatusTitle) nearbyStatusTitle.textContent = "Konum İzni Alınamadı";
-  if (nearbyStatusDesc) nearbyStatusDesc.textContent = "Barselona merkezindeki durakları görmek için aşağıdaki butona dokunun.";
+  if (nearbyStatusTitle) nearbyStatusTitle.textContent = "Konum İzni Bekleniyor";
+  if (nearbyStatusDesc) nearbyStatusDesc.textContent = "Tarayıcıdan konum izni verin veya aşağıdaki butonla Barselona merkezini inceleyin.";
   if (nearbyLinesBlock) nearbyLinesBlock.hidden = true;
   if (nearbyStopsBlock) nearbyStopsBlock.hidden = true;
 }
 
 function setUserLocation(lng, lat, accuracy, isDemo = false, animate = true) {
-  const distToBcnCenter = haversine(lng, lat, 2.17005, 41.38702);
-  const isOutside = distToBcnCenter > 40000;
+  let minStopDist = Infinity;
+  for (const stop of stopFeatures) {
+    const d = haversine(lng, lat, stop.lng, stop.lat);
+    if (d < minStopDist) minStopDist = d;
+  }
+  const isOutside = minStopDist > 50000;
 
   userLocation = { lng, lat, accuracy, isDemo, isOutside };
   updateUserMarker(lng, lat);
@@ -1377,22 +1381,6 @@ function renderNearby() {
   if (!userLocation) return;
   const { lng, lat, isOutside, isDemo } = userLocation;
 
-  if (isOutside && !isDemo) {
-    if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = false;
-    if (nearbyStatusTitle) nearbyStatusTitle.textContent = "Barselona Dışındasınız";
-    const km = Math.round(haversine(lng, lat, 2.17005, 41.38702) / 1000);
-    if (nearbyStatusDesc) nearbyStatusDesc.textContent = `Bulunduğunuz konum Barselona'ya ~${km} km mesafede.`;
-    if (nearbyLinesBlock) nearbyLinesBlock.hidden = true;
-    if (nearbyStopsBlock) nearbyStopsBlock.hidden = true;
-    return;
-  }
-
-  if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = true;
-  if (nearbyStatusTitle) nearbyStatusTitle.textContent = isDemo ? "📍 Plaça de Catalunya (Simülasyon)" : "📍 Bulunduğunuz Bölge";
-  if (nearbyStatusDesc) nearbyStatusDesc.textContent = "En yakın duraklar ve canlı hatlar:";
-  if (nearbyLinesBlock) nearbyLinesBlock.hidden = false;
-  if (nearbyStopsBlock) nearbyStopsBlock.hidden = false;
-
   const stopsWithDist = [];
   for (const stop of stopFeatures) {
     const dist = Math.round(haversine(lng, lat, stop.lng, stop.lat));
@@ -1401,6 +1389,19 @@ function renderNearby() {
   stopsWithDist.sort((a, b) => a.distance - b.distance);
 
   const nearest15 = stopsWithDist.slice(0, 15);
+
+  if (isOutside && !isDemo) {
+    if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = false;
+    if (nearbyStatusTitle) nearbyStatusTitle.textContent = "📍 Konumunuz";
+    const km = nearest15.length ? Math.round(nearest15[0].distance / 1000) : 0;
+    if (nearbyStatusDesc) nearbyStatusDesc.textContent = `Barselona ağına ~${km} km mesafedesiniz.`;
+  } else {
+    if (nearbyDemoPrompt) nearbyDemoPrompt.hidden = true;
+    if (nearbyStatusTitle) nearbyStatusTitle.textContent = isDemo ? "📍 Plaça de Catalunya (Demo)" : "📍 Bulunduğunuz Bölge";
+    if (nearbyStatusDesc) nearbyStatusDesc.textContent = "En yakın duraklar ve canlı hatlar:";
+  }
+  if (nearbyLinesBlock) nearbyLinesBlock.hidden = false;
+  if (nearbyStopsBlock) nearbyStopsBlock.hidden = false;
 
   const seenLineIds = new Set();
   const nearbyLines = [];
