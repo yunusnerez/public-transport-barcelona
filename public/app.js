@@ -87,6 +87,7 @@ let pollTimer = 0;
 let moveTimer = 0;
 let pollGen = 0;
 let popupVehicleId = null;
+let selectedStop = null;
 let activeStationTicker = null;
 let currentPopupAbort = null;
 
@@ -94,6 +95,12 @@ let currentPopupAbort = null;
 let userLocation = null;
 let userMarker = null;
 let isLocating = false;
+
+// Global function handles assigned in boot()
+let focusLine = () => {};
+let clearFocus = () => {};
+let renderStationPopup = () => {};
+let renderFocus = () => {};
 
 function clearStationTicker() {
   if (activeStationTicker) {
@@ -114,43 +121,99 @@ const narrowQuery = window.matchMedia("(max-width: 760px)");
 if (narrowQuery.matches) panel.classList.add("collapsed");
 if (sheetToggle) {
   sheetToggle.setAttribute("aria-expanded", panel.classList.contains("collapsed") ? "false" : "true");
-  sheetToggle.addEventListener("click", () => {
+  sheetToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
     panel.classList.toggle("collapsed");
-    const open = !panel.classList.contains("collapsed");
-    sheetToggle.setAttribute("aria-expanded", open ? "true" : "false");
     layout();
   });
 }
 
-// Touch swipe gestures on mobile sheet handle
+// Mobile bottom-sheet touch & swipe gesture handling
 let touchStartY = 0;
-let touchDiffY = 0;
+let touchStartX = 0;
+let touchStartTime = 0;
+let touchScrollTarget = null;
+let touchStartScrollTop = 0;
+let isHeaderTouch = false;
+
+function findScrollableParent(target) {
+  let el = target;
+  while (el && el !== panel && el !== document.body) {
+    if (el.scrollHeight > el.clientHeight + 2) {
+      const overflowY = window.getComputedStyle(el).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") {
+        return el;
+      }
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+
 if (sheetHandleZone) {
   sheetHandleZone.addEventListener("click", () => {
     panel.classList.toggle("collapsed");
     layout();
   });
-  sheetHandleZone.addEventListener("touchstart", (e) => {
-    if (e.touches.length === 1) {
-      touchStartY = e.touches[0].clientY;
-      touchDiffY = 0;
+}
+
+panel.addEventListener("touchstart", (e) => {
+  if (!narrowQuery.matches || e.touches.length !== 1) return;
+  const touch = e.touches[0];
+  touchStartY = touch.clientY;
+  touchStartX = touch.clientX;
+  touchStartTime = Date.now();
+
+  isHeaderTouch = Boolean(
+    e.target.closest("#sheet-handle-zone, .panel-bar, #focus-bar .focus-top, #focus-bar")
+  );
+
+  touchScrollTarget = findScrollableParent(e.target);
+  touchStartScrollTop = touchScrollTarget ? touchScrollTarget.scrollTop : 0;
+}, { passive: true });
+
+panel.addEventListener("touchmove", () => {
+  // Passive listener - native smooth momentum scrolling preserved
+}, { passive: true });
+
+panel.addEventListener("touchend", (e) => {
+  if (!narrowQuery.matches || e.changedTouches.length !== 1) return;
+  const touch = e.changedTouches[0];
+  const diffY = touch.clientY - touchStartY;
+  const diffX = touch.clientX - touchStartX;
+  const elapsed = Math.max(1, Date.now() - touchStartTime);
+  const velocityY = diffY / elapsed;
+
+  // Ignore primarily horizontal gestures (e.g. scrolling mode-tabs)
+  if (Math.abs(diffX) > Math.abs(diffY)) return;
+
+  const isCollapsed = panel.classList.contains("collapsed");
+
+  // SWIPE DOWN gesture
+  if (diffY > 40 || (diffY > 20 && velocityY > 0.35)) {
+    if (!isCollapsed) {
+      // Swiping down from header or when scroll content is at the top collapses to peek
+      if (isHeaderTouch || touchStartScrollTop <= 0) {
+        panel.classList.add("collapsed");
+        layout();
+      }
+    } else {
+      // Already collapsed in peek mode! If a line is selected, swiping down clears focus (exits line)!
+      if (focusId) {
+        clearFocus();
+      }
     }
-  }, { passive: true });
-  sheetHandleZone.addEventListener("touchmove", (e) => {
-    if (e.touches.length === 1) {
-      touchDiffY = e.touches[0].clientY - touchStartY;
-    }
-  }, { passive: true });
-  sheetHandleZone.addEventListener("touchend", () => {
-    if (touchDiffY > 35) {
-      panel.classList.add("collapsed");
-      layout();
-    } else if (touchDiffY < -35) {
+    return;
+  }
+
+  // SWIPE UP gesture
+  if (diffY < -35 || (diffY < -18 && velocityY < -0.35)) {
+    if (isCollapsed) {
       panel.classList.remove("collapsed");
       layout();
     }
-  });
-}
+  }
+});
 
 if (search) {
   search.addEventListener("input", () => {
@@ -226,6 +289,10 @@ function boot() {
   popup.on("close", () => {
     popupVehicleId = null;
     clearStationTicker();
+    if (selectedStop) {
+      selectedStop = null;
+      if (window.__bcnMap) applyView(window.__bcnMap);
+    }
   });
 
   map.on("load", async () => {
@@ -336,6 +403,25 @@ function boot() {
       map.on("click", "stops-bus", (event) => showStop(map, popup, event));
       map.on("click", "lines-rail", (event) => focusFromMap(event));
       map.on("click", "lines-bus", (event) => focusFromMap(event));
+      map.on("click", (event) => {
+        const hits = map.queryRenderedFeatures(event.point, {
+          layers: ["stops-station", "stops-bus", "lines-rail", "lines-bus"]
+        });
+        if (hits.length > 0) return;
+        const pop = window.__bcnPopup;
+        if (pop && pop.isOpen()) {
+          dismissPopup();
+          return;
+        }
+        if (focusId) {
+          clearFocus();
+          return;
+        }
+        if (narrowQuery.matches && !panel.classList.contains("collapsed")) {
+          panel.classList.add("collapsed");
+          layout();
+        }
+      });
       for (const layer of ["stops-station", "stops-bus", "lines-rail", "lines-bus"]) {
         map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
         map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
@@ -375,7 +461,24 @@ function boot() {
   });
 
   // Event Listeners for UI
-  document.getElementById("focus-back")?.addEventListener("click", clearFocus);
+  document.getElementById("focus-back")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearFocus();
+  });
+  document.getElementById("focus-expand-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    panel.classList.toggle("collapsed");
+    layout();
+  });
+  focusBar?.addEventListener("click", (e) => {
+    if (e.target.closest("#focus-back")) return;
+    if (e.target.closest("#focus-expand-btn")) return;
+    if (e.target.closest(".focus-tab")) return;
+    if (narrowQuery.matches && panel.classList.contains("collapsed")) {
+      panel.classList.remove("collapsed");
+      layout();
+    }
+  });
   document.getElementById("follow-stop")?.addEventListener("click", stopFollow);
 
   // Focus detail sub-tabs (Stops vs Vehicles)
@@ -396,8 +499,13 @@ function boot() {
   document.getElementById("btn-locate")?.addEventListener("click", () => {
     locateUser(true);
   });
-  document.getElementById("quick-locate-btn")?.addEventListener("click", () => {
+  document.getElementById("quick-locate-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
     selectTab("nearby");
+    if (narrowQuery.matches) {
+      panel.classList.remove("collapsed");
+      layout();
+    }
     if (!userLocation) locateUser(true);
   });
   document.getElementById("btn-zoom-in")?.addEventListener("click", () => {
@@ -482,6 +590,16 @@ function boot() {
     const lngLat = event.lngLat || (coord ? [coord[0], coord[1]] : null);
     if (!lngLat) return;
     stopFollow();
+    selectedStop = {
+      name: props.name || "Durak",
+      code: props.code || "",
+      kind: props.kind,
+      lines: props.lines || "",
+      metro: props.metro || null,
+      lng: lngLat.lng !== undefined ? lngLat.lng : lngLat[0],
+      lat: lngLat.lat !== undefined ? lngLat.lat : lngLat[1],
+    };
+    applyView(mapObj);
     renderStationPopup(mapObj, pop, lngLat, props);
   }
 
@@ -555,7 +673,7 @@ function boot() {
     return [];
   }
 
-  function renderStationPopup(mapObj, pop, lngLat, props) {
+  renderStationPopup = function(mapObj, pop, lngLat, props) {
     clearStationTicker();
     popupVehicleId = null;
     const metroList = extractMetroMeta(props);
@@ -861,7 +979,8 @@ function boot() {
         });
       }
     }
-  }
+  };
+  window.__bcnRenderStationPopup = renderStationPopup;
 
   function focusFromMap(event) {
     const stops = map.queryRenderedFeatures(event.point, { layers: ["stops-station", "stops-bus"] });
@@ -936,22 +1055,45 @@ function boot() {
     setHint();
   }
 
-  function focusLine(id) {
+  focusLine = function(id, pushHistory = true) {
     const line = byId.get(id);
     if (!line) return;
+    if (line.mode === "bus" && families.bus === "off") {
+      families.bus = "auto";
+      updateFamilyChips();
+    } else if (line.mode === "metro" && !families.metro) {
+      families.metro = true;
+      updateFamilyChips();
+    } else if (line.mode === "fgc" && !families.fgc) {
+      families.fgc = true;
+      updateFamilyChips();
+    } else if (line.mode === "tram" && !families.tram) {
+      families.tram = true;
+      updateFamilyChips();
+    }
     focusId = id;
     stopFollow();
     dismissPopup();
     saveUi();
     renderFocus();
+    if (narrowQuery.matches) {
+      panel.classList.add("collapsed");
+    }
     layout();
     applyView(map);
     fitLine(map, id);
     poll(true);
     arm(POLL_MS);
-  }
+    if (pushHistory && window.history && window.history.pushState) {
+      try {
+        window.history.pushState({ focusId: id }, "");
+      } catch {}
+    }
+  };
+  window.__bcnFocusLine = focusLine;
 
-  function clearFocus() {
+  clearFocus = function(updateHistory = true) {
+    if (!focusId) return;
     focusId = null;
     stopFollow();
     dismissPopup();
@@ -961,32 +1103,58 @@ function boot() {
     applyView(map);
     poll(true);
     arm(POLL_MS);
-  }
+    if (updateHistory && window.history && window.history.state && window.history.state.focusId) {
+      try {
+        window.history.back();
+      } catch {}
+    }
+  };
+  window.__bcnClearFocus = clearFocus;
 
-  function renderFocus() {
+  window.addEventListener("popstate", () => {
+    if (focusId) {
+      clearFocus(false);
+    }
+  });
+
+  renderFocus = function() {
     const line = focusId && byId.get(focusId);
     if (familiesEl) familiesEl.hidden = Boolean(line);
     if (hintEl) hintEl.hidden = Boolean(line);
     const mainNav = document.getElementById("main-nav");
+    const panelBar = document.querySelector(".panel-bar");
 
     if (!line) {
+      panel.classList.remove("has-focus");
       focusBar.hidden = true;
       focusDetail.hidden = true;
+      if (panelBar) panelBar.hidden = false;
       if (mainNav) mainNav.hidden = false;
       markCurrent();
       return;
     }
+    panel.classList.add("has-focus");
+    if (panelBar) panelBar.hidden = true;
     if (mainNav) mainNav.hidden = true;
     focusBar.hidden = false;
     focusDetail.hidden = false;
-    focusBar.style.borderLeftColor = line.color;
+    focusBar.style.setProperty("--focus-color", line.color || "#3d6f99");
+    focusBar.style.borderLeftColor = line.color || "#3d6f99";
     document.getElementById("focus-swatch").style.background = line.color;
     document.getElementById("focus-code").textContent = line.code;
     const chip = document.getElementById("focus-chip");
     chip.className = `chip ${chipClass(line)}`;
     chip.textContent = chipText(line);
     document.getElementById("focus-name").textContent = line.name || "";
+    const namePeek = document.getElementById("focus-name-peek");
+    if (namePeek) {
+      namePeek.textContent = line.name || "";
+    }
     document.getElementById("focus-note").textContent = focusNote(line);
+    const backLabel = document.getElementById("focus-back-label");
+    if (backLabel) {
+      backLabel.textContent = currentTab === "nearby" ? "Yakınım" : "Tüm hatlar";
+    }
     renderStops(line);
     renderVehicles();
     markCurrent();
@@ -1061,19 +1229,7 @@ function boot() {
       }
 
       button.addEventListener("click", () => {
-        stopFollow();
-        skipMovePoll = true;
-        map.easeTo({
-          center: [stop.lng, stop.lat],
-          zoom: Math.max(map.getZoom(), 15.5),
-          duration: 500,
-          essential: true,
-        });
-        renderStationPopup(map, popup, [stop.lng, stop.lat], stop);
-        if (narrowQuery.matches) {
-          panel.classList.add("collapsed");
-          layout();
-        }
+        navigateToStop(stop);
       });
       list.append(button);
     });
@@ -1130,8 +1286,8 @@ function boot() {
 
       button.append(left, action);
       button.addEventListener("click", () => {
+        startFollow(vehicle.id, vehicle);
         openPopup(popup, vehicle);
-        startFollow(vehicle.id);
         if (narrowQuery.matches) {
           panel.classList.add("collapsed");
           layout();
@@ -1247,6 +1403,7 @@ function boot() {
     }
     renderVehicles();
     trackFollow();
+    updatePopupFollowButton();
   }
 
   function paintStatus(body, networkStale) {
@@ -1377,6 +1534,75 @@ function updateUserMarker(lng, lat) {
   }
 }
 
+function navigateToStop(stop) {
+  if (!stop) return;
+  stopFollow();
+
+  const stopLines = (stop.lines || "").split(",").map((s) => s.trim()).filter(Boolean);
+
+  if (focusId && !stopLines.includes(focusId)) {
+    clearFocus();
+  }
+
+  // Ensure relevant transport mode filter is enabled so the stop and its lines are visible on map
+  let filterChanged = false;
+  const isBus = stop.kind === "stop" || stopLines.some((l) => l.startsWith("tmb-bus:"));
+  const isMetro = stopLines.some((l) => l.startsWith("tmb-metro:")) || (stop.kind === "station" && Boolean(stop.metro));
+  const isFgc = stopLines.some((l) => l.startsWith("fgc:"));
+  const isTram = stopLines.some((l) => l.startsWith("tram:"));
+
+  if (isBus && families.bus === "off") {
+    families.bus = "auto";
+    filterChanged = true;
+  }
+  if (isMetro && !families.metro) {
+    families.metro = true;
+    filterChanged = true;
+  }
+  if (isFgc && !families.fgc) {
+    families.fgc = true;
+    filterChanged = true;
+  }
+  if (isTram && !families.tram) {
+    families.tram = true;
+    filterChanged = true;
+  }
+
+  if (filterChanged) {
+    updateFamilyChips();
+    saveUi();
+  }
+
+  selectedStop = stop;
+
+  const map = window.__bcnMap;
+  const pop = window.__bcnPopup;
+  if (map) {
+    applyView(map);
+
+    map.easeTo({
+      center: [stop.lng, stop.lat],
+      zoom: Math.max(map.getZoom(), 15.5),
+      duration: 500,
+      essential: true,
+    });
+
+    if (pop) {
+      renderStationPopup(map, pop, [stop.lng, stop.lat], stop);
+    }
+
+    if (filterChanged && typeof window.__bcnPoll === "function") {
+      window.__bcnPoll(true);
+      arm(POLL_MS);
+    }
+  }
+
+  if (narrowQuery.matches) {
+    panel.classList.add("collapsed");
+    layout();
+  }
+}
+
 function renderNearby() {
   if (!userLocation) return;
   const { lng, lat, isOutside, isDemo } = userLocation;
@@ -1491,23 +1717,7 @@ function renderNearby() {
       card.append(top, foot);
 
       card.addEventListener("click", () => {
-        stopFollow();
-        skipMovePoll = true;
-        const map = window.__bcnMap;
-        const pop = window.__bcnPopup;
-        if (map) {
-          map.easeTo({
-            center: [stop.lng, stop.lat],
-            zoom: Math.max(map.getZoom(), 15.5),
-            duration: 500,
-            essential: true,
-          });
-          if (pop) renderStationPopup(map, pop, [stop.lng, stop.lat], stop);
-        }
-        if (narrowQuery.matches) {
-          panel.classList.add("collapsed");
-          layout();
-        }
+        navigateToStop(stop);
       });
 
       nearbyStopsList.append(card);
@@ -1674,23 +1884,7 @@ function renderSearchResults(lines, stops) {
 
     item.append(icon, info);
     item.addEventListener("click", () => {
-      stopFollow();
-      skipMovePoll = true;
-      const map = window.__bcnMap;
-      const pop = window.__bcnPopup;
-      if (map) {
-        map.easeTo({
-          center: [stop.lng, stop.lat],
-          zoom: Math.max(map.getZoom(), 15.5),
-          duration: 500,
-          essential: true,
-        });
-        if (pop) renderStationPopup(map, pop, [stop.lng, stop.lat], stop);
-      }
-      if (narrowQuery.matches) {
-        panel.classList.add("collapsed");
-        layout();
-      }
+      navigateToStop(stop);
     });
     searchResultsListEl.append(item);
   }
@@ -1711,8 +1905,8 @@ function createMarker(map, pop, vehicle) {
   el.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    startFollow(el._vehicle.id, el._vehicle);
     openPopup(pop, el._vehicle);
-    startFollow(el._vehicle.id);
   });
   const marker = new maplibregl.Marker({ element: el, anchor: "center" })
     .setLngLat([vehicle.lon, vehicle.lat])
@@ -1744,31 +1938,76 @@ function paintMarker(entry, vehicle) {
 function openPopup(pop, vehicle) {
   if (!vehicle) return;
   clearStationTicker();
+  popupVehicleId = vehicle.id;
   const line = lineFor(vehicle);
   const isMetro = line && line.mode === "metro";
   const gps = vehicle.source === "gps";
+  const isFollowing = Boolean(followId && followId === vehicle.id);
   const src = isMetro
     ? "Kaynak: tahmini metro konumu. İstasyon varış sürelerine ve GTFS hat geometrisine göre hesaplanmıştır."
     : (gps
       ? "Kaynak: canlı GPS."
       : "Kaynak: tahmini. Konum, iBus varış süresinin GTFS hat şekline işlenmesidir. Gerçek GPS değildir.");
+
+  const followBtnHtml = isFollowing
+    ? `<button type="button" class="js-follow is-following" aria-pressed="true"><span class="follow-icon">✓</span> İzleniyor · Takibi Bırak</button>`
+    : `<button type="button" class="js-follow" aria-pressed="false"><span class="follow-icon">🎯</span> Takip Et</button>`;
+
   pop.setLngLat([vehicle.lon, vehicle.lat]).setHTML(
     `<div class="pop">
-      <b style="color:${esc(colorFor(vehicle))}">${esc(vehicle.line)}</b>
-      <div>${esc(line && line.name || "")}</div>
-      <div>Yön: ${esc(vehicle.destination || "—")}</div>
-      <div>Son güncelleme: ${esc(formatStamp(vehicle.updated))}</div>
+      <div class="pop-head">
+        <b class="pop-line-code" style="color:${esc(colorFor(vehicle))}">${esc(vehicle.line)}</b>
+        <span class="pop-badge ${isMetro ? "metro" : (gps ? "gps" : "est")}">${isMetro ? "Metro" : (gps ? "Canlı GPS" : "Tahmini")}</span>
+      </div>
+      <div class="pop-line-name">${esc(line && line.name || "")}</div>
+      <div class="pop-dest">Yön: <strong>${esc(vehicle.destination || "—")}</strong></div>
+      <div class="pop-time">Son güncelleme: ${esc(formatStamp(vehicle.updated))}</div>
       <div class="src">${src}</div>
-      <button type="button" class="js-follow">Takip et</button>
+      ${followBtnHtml}
     </div>`,
   ).addTo(window.__bcnMap);
+
   const button = pop.getElement() && pop.getElement().querySelector(".js-follow");
-  if (button) button.addEventListener("click", () => startFollow(vehicle.id));
-  popupVehicleId = vehicle.id;
+  if (button) {
+    button.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFollow(vehicle.id, vehicle);
+    });
+  }
 }
 
-function startFollow(id) {
-  const vehicle = findVehicle(id);
+function updatePopupFollowButton() {
+  const pop = window.__bcnPopup;
+  if (!pop || !pop.isOpen()) return;
+  const el = pop.getElement();
+  if (!el) return;
+  const button = el.querySelector(".js-follow");
+  if (!button) return;
+  const isFollowing = Boolean(followId && followId === popupVehicleId);
+  button.classList.toggle("is-following", isFollowing);
+  button.setAttribute("aria-pressed", isFollowing ? "true" : "false");
+  button.innerHTML = isFollowing
+    ? '<span class="follow-icon">✓</span> İzleniyor · Takibi Bırak'
+    : '<span class="follow-icon">🎯</span> Takip Et';
+}
+
+function toggleFollow(id, vehicleObj) {
+  if (followId && followId === id) {
+    stopFollow();
+  } else {
+    startFollow(id, vehicleObj);
+  }
+}
+
+function startFollow(id, vehicleObj) {
+  let vehicle = findVehicle(id);
+  if (!vehicle && vehicleObj) {
+    vehicle = vehicleObj;
+    if (vehicle.operator && vehicles[vehicle.operator]) {
+      vehicles[vehicle.operator].set(vehicle.id, vehicle);
+    }
+  }
   if (!vehicle) return;
   followId = id;
   followAnchor = null;
@@ -1776,6 +2015,7 @@ function startFollow(id) {
   followLabel.textContent = `${vehicle.line} izleniyor`;
   easeToVehicle(vehicle, true);
   if (typeof window.__bcnRenderVehicles === "function") window.__bcnRenderVehicles();
+  updatePopupFollowButton();
 }
 
 function trackFollow() {
@@ -1784,12 +2024,6 @@ function trackFollow() {
   followBar.hidden = false;
   if (!vehicle) {
     followLabel.textContent = "Araç bu turda yok";
-    return;
-  }
-  const line = lineFor(vehicle);
-  const view = window.__bcnMap;
-  if (line && view && !shownIds(view).includes(line.id)) {
-    followLabel.textContent = `${vehicle.line} görünmüyor`;
     return;
   }
   followLabel.textContent = `${vehicle.line} izleniyor`;
@@ -1818,6 +2052,11 @@ function dismissPopup() {
   const pop = window.__bcnPopup;
   if (pop && pop.isOpen()) pop.remove();
   popupVehicleId = null;
+  if (selectedStop) {
+    selectedStop = null;
+    const map = window.__bcnMap;
+    if (map) applyView(map);
+  }
 }
 
 function stopFollow() {
@@ -1825,14 +2064,20 @@ function stopFollow() {
   followAnchor = null;
   followBar.hidden = true;
   followLabel.textContent = "";
+  if (typeof window.__bcnRenderVehicles === "function") window.__bcnRenderVehicles();
+  updatePopupFollowButton();
 }
 
 function applyView(map) {
+  if (!map) return;
   const ids = shownIds(map);
   const idIn = ids.length ? ["in", ["get", "id"], ["literal", ids]] : ["literal", false];
   map.setFilter("lines-bus", ["all", ["==", ["get", "mode"], "bus"], idIn]);
   map.setFilter("lines-rail", ["all", ["!=", ["get", "mode"], "bus"], idIn]);
   const needles = ids.map((id) => ["in", `,${id},`, ["get", "lines"]]);
+  if (selectedStop && selectedStop.code) {
+    needles.push(["==", ["get", "code"], String(selectedStop.code)]);
+  }
   const any = needles.length ? ["any", ...needles] : ["literal", false];
   map.setFilter("stops-station", ["all", ["==", ["get", "kind"], "station"], any]);
   map.setFilter("stops-bus", ["all", ["==", ["get", "kind"], "stop"], any]);
@@ -1849,13 +2094,28 @@ function applyView(map) {
 }
 
 function shownIds(map) {
-  if (focusId && byId.has(focusId)) return [focusId];
+  const followLine = followId ? lineFor(findVehicle(followId)) : null;
+  const followLineId = followLine ? followLine.id : null;
+  if (focusId && byId.has(focusId)) {
+    const list = [focusId];
+    if (followLineId && followLineId !== focusId) list.push(followLineId);
+    return list;
+  }
   const zoom = map.getZoom();
   const bounds = map.getBounds();
   const ids = [];
   for (const line of catalog) {
-    if (!familyShown(line, zoom, bounds)) continue;
-    ids.push(line.id);
+    if (line.id === followLineId || familyShown(line, zoom, bounds)) {
+      ids.push(line.id);
+    }
+  }
+  if (selectedStop && selectedStop.lines) {
+    const selLines = selectedStop.lines.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const lid of selLines) {
+      if (byId.has(lid) && !ids.includes(lid)) {
+        ids.push(lid);
+      }
+    }
   }
   return ids;
 }
@@ -2223,7 +2483,17 @@ function fitLine(map, lineId) {
   }
   if (bounds.isEmpty()) return;
   skipMovePoll = true;
-  map.fitBounds(bounds, { padding: 28, maxZoom: 15, duration: 650 });
+  const pad = panelPadding();
+  map.fitBounds(bounds, {
+    padding: {
+      top: Math.max(pad.top || 0, 32),
+      bottom: Math.max(pad.bottom || 0, 32),
+      left: Math.max(pad.left || 0, 32),
+      right: Math.max(pad.right || 0, 32),
+    },
+    maxZoom: 15,
+    duration: 650,
+  });
 }
 
 function updateTramKey() {
@@ -2244,10 +2514,10 @@ function arm(delay) {
 function panelPadding() {
   if (narrowQuery.matches) {
     const collapsed = panel.classList.contains("collapsed");
-    const bottom = collapsed ? (focusId ? 110 : 80) : Math.round(window.innerHeight * 0.48);
-    return { top: 78, bottom, left: 10, right: 10 };
+    const bottom = collapsed ? (focusId ? 92 : 80) : Math.round(window.innerHeight * 0.44);
+    return { top: 56, bottom, left: 14, right: 14 };
   }
-  return { top: focusId ? 86 : 52, bottom: 28, left: 368, right: 16 };
+  return { top: 56, bottom: 28, left: 376, right: 24 };
 }
 
 function layout() {

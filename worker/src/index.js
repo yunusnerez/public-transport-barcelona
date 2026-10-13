@@ -724,7 +724,9 @@ async function loadMetro(env, codes, now) {
             for (const est of lineObj.estacions || []) {
               for (const traj of est.linies_trajectes || []) {
                 const dest = traj.desti_trajecte || "";
+                let trainIdx = 0;
                 for (const train of traj.propers_trens || []) {
+                  trainIdx++;
                   const eta = parseTrainEta(train.temps_arribada, now);
                   if (eta == null) continue;
                   const pat = choosePattern(patterns, { stopCode, destination: dest, sentit: null }) || patterns[0];
@@ -732,7 +734,7 @@ async function loadMetro(env, codes, now) {
                   const placed = placeOnPattern(pat, stopCode, eta);
                   if (!placed) continue;
                   vehicles.push({
-                    id: `metro:${code}-${stopCode}-${eta}`,
+                    id: `metro:${code}-${stopCode}-${trainIdx}`,
                     operator: "tmb",
                     line: code,
                     lat: Math.round(placed.lat * 1e6) / 1e6,

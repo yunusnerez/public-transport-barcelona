@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex">
   <title>Barcelona Toplu Taşıma - Canlı Harita & Duraklar</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="styles.css?v=20261009-1">
+  <link rel="stylesheet" href="styles.css?v=20261013-1">
 </head>
 <body>
   <div id="map" role="application" aria-label="Barcelona haritası"></div>
@@ -79,11 +79,20 @@
           <i id="focus-swatch" class="swatch"></i>
           <b id="focus-code"></b>
           <span id="focus-chip" class="chip"></span>
+          <span id="focus-name-peek" class="focus-name-peek"></span>
         </div>
-        <button id="focus-back" type="button" class="focus-back-btn">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
-          Tüm hatlar
-        </button>
+        <div class="focus-top-actions">
+          <button id="focus-expand-btn" type="button" class="focus-expand-btn" aria-label="Görünümü değiştir" title="Genişlet / Daralt">
+            <svg class="focus-expand-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
+          </button>
+          <button id="focus-back" type="button" class="focus-back-btn" aria-label="Hattı Kapat" title="Hattı Kapat (Esc / Aşağı Kaydır)">
+            <svg class="focus-back-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            <span id="focus-back-label" class="focus-back-text">Tüm hatlar</span>
+          </button>
+        </div>
       </div>
       <p id="focus-name"></p>
       <p id="focus-note"></p>
@@ -178,6 +187,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="config.js?v=20261008-4"></script>
-  <script src="app.js?v=20261009-1"></script>
+  <script src="app.js?v=20261013-1"></script>
 </body>
 </html>
